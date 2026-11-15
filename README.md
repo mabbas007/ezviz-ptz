@@ -173,16 +173,30 @@ or merge that block into your Frigate compose file.
 
 The workflow [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)
 tests the bridge, builds the `linux/amd64` image and pushes it to GHCR on every
-push to `main`, on `v*` tags and on manual runs from the Actions tab. No secrets
-or repository settings are needed — it uses `GITHUB_TOKEN`.
+push to `main` (and on manual runs from `main`). Pull requests run the tests but
+do not publish. No secrets or repository settings are needed — it uses
+`GITHUB_TOKEN`.
+
+Versions are `MAJOR.MINOR`:
+
+- `VERSION` at the repository root holds the major version (currently `1`).
+  Edit it to bump the major.
+- The minor is the number of first-parent commits since `VERSION` last changed.
+  The build that includes a `VERSION` change is `X.0`; each later commit
+  increments it. A push containing several commits advances by that many.
+- Commit the major bump as its own commit/push for a clean `2.0`.
 
 ```
-ghcr.io/mabbas007/ezviz-ptz:latest     # from main
-ghcr.io/mabbas007/ezviz-ptz:main
-ghcr.io/mabbas007/ezviz-ptz:1.2.3      # from a v1.2.3 tag
-ghcr.io/mabbas007/ezviz-ptz:1.2
+ghcr.io/mabbas007/ezviz-ptz:1.42       # exact build (pin this for deployment)
+ghcr.io/mabbas007/ezviz-ptz:1          # newest 1.x
+ghcr.io/mabbas007/ezviz-ptz:latest     # newest overall
+ghcr.io/mabbas007/ezviz-ptz:main       # newest main build
 ghcr.io/mabbas007/ezviz-ptz:sha-abc1234
 ```
+
+Bumping `VERSION` to `2` and pushing publishes `2.0`, moves `:2` and `:latest`,
+and leaves `:1` at the last 1.x build. Re-running a workflow for the same commit
+publishes the same version again.
 
 To run the published image, replace the `build:` block in `docker-compose.yml`
 with the image:

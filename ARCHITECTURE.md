@@ -626,14 +626,12 @@ flowchart LR
 flowchart LR
     PR["Pull request"] --> GO["Go build · vet · unit tests<br/>gofmt + go test -race"]
     MAIN["Push main"] --> GO
-    TAG["Push v* tag"] --> GO
-    MAN["Manual dispatch"] --> GO
+    MAN["Manual dispatch from main"] --> GO
     PR --> TEST["Integration test<br/>fake HCNetSDK + onvif-zeep-async 4.3.0"]
     MAIN --> TEST
-    TAG --> TEST
     MAN --> TEST
-    GO --> BUILD["buildx<br/>linux/amd64"]
-    TEST -->|"all checks pass"| BUILD
+    GO --> BUILD["buildx<br/>linux/amd64<br/>MAJOR.MINOR tags"]
+    TEST -->|"all checks pass, main only"| BUILD
     BUILD --> GHCR[("ghcr.io/mabbas007/ezviz-ptz")]
 ```
 
@@ -649,8 +647,11 @@ flowchart LR
   `GetServices`, capabilities, profiles, spaces, `MoveStatus`, relative and
   continuous moves, zoom axis, the empty preset list, `AbsoluteMove` fault and
   auth failure.
-- **Publish** — only after the Go and integration jobs pass; uses `GITHUB_TOKEN` with
-  `packages: write`; tags come from `docker/metadata-action`.
+- **Publish** — only after the Go and integration jobs pass and only from
+  `main`; uses `GITHUB_TOKEN` with `packages: write`. The major version comes
+  from the root `VERSION` file and the minor is the first-parent commit count
+  since `VERSION` changed, so image tags are `MAJOR.MINOR`, `MAJOR`, `latest`,
+  `main` and `sha-...`.
 
 ---
 

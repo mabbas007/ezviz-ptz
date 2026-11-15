@@ -3,9 +3,12 @@ name: Build and publish image
 # Builds the linux/amd64 bridge image and pushes it to GitHub Container
 # Registry (ghcr.io). Triggers:
 #   - pull request: run the Go unit tests and integration test, never publish
-#   - push to main: publish :main and :latest
-#   - push a v* tag (e.g. v0.1.0): publish :0.1.0, :0.1, :sha-...
-#   - manual run from the Actions tab (choose a branch, get a :sha-... tag)
+#   - push to main: publish <MAJOR>.<MINOR>, :<MAJOR>, :latest, :main and :sha-...
+#   - manual run from main: same as a push
+#
+# <MAJOR> is the number in the VERSION file (edit it to bump the major).
+# <MINOR> is the number of first-parent commits since VERSION last changed, so
+# the first build after a major bump is X.0 and each subsequent commit bumps it.
 #
 # Nothing needs to be configured in the repository: GITHUB_TOKEN is enough.
 # The first run creates the package; see the README for visibility/auth.
@@ -14,7 +17,6 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -56,7 +58,7 @@ jobs:
   publish:
     name: Publish to GHCR
     needs: [go, test]
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -64,6 +66,29 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          # VERSION's history is needed to derive the minor version.
+          fetch-depth: 0
+
+      - name: Compute release version
+        id: release
+        run: |
+          set -euo pipefail
+          major="$(tr -d '[:space:]' < VERSION)"
+          if ! [[ "$major" =~ ^[0-9]+$ ]]; then
+            echo "VERSION must contain a single integer major version (e.g. 1)" >&2
+            exit 1
+          fi
+          base="$(git log -1 --format=%H -- VERSION)"
+          if [ -z "$base" ]; then
+            echo "VERSION is not tracked in git history" >&2
+            exit 1
+          fi
+          minor="$(git rev-list --count --first-parent "$base..HEAD")"
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+          echo "minor=$minor" >> "$GITHUB_OUTPUT"
+          echo "version=$major.$minor" >> "$GITHUB_OUTPUT"
+          echo "Publishing $major.$minor"
 
       - uses: docker/setup-buildx-action@v4
 
@@ -81,15 +106,17 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=raw,value=${{ steps.release.outputs.version }}
+            type=raw,value=${{ steps.release.outputs.major }}
             type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.title=EZVIZ/Hikvision ONVIF PTZ bridge
             org.opencontainers.image.description=ONVIF PTZ server that drives EZVIZ/Hikvision cameras through the Hikvision SDK
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build and push
         uses: docker/build-push-action@v7
