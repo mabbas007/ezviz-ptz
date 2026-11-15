@@ -1,8 +1,8 @@
-# zoneminder_ptz_script
+# ezviz-ptz
 
 PTZ control for EZVIZ cameras (tested on the EZVIZ C8C and TY1) using the
-Hikvision HCNetSDK, with a small UNIX-socket service and a ZoneMinder control
-module.
+Hikvision HCNetSDK: a small UNIX-socket PTZ daemon with integrations for
+ZoneMinder (control module) and Frigate (ONVIF bridge with autotracking).
 
 ## Tested hardware
 

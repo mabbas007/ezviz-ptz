@@ -78,14 +78,18 @@ cameras and can also be merged into the compose file you use for Frigate.
 
 ### Without compose
 
+The image is `linux/amd64` only, so the platform flag is required when building
+on an arm64 host (it is a no-op on x86-64):
+
 ```sh
-docker build -f frigate-onvif/Dockerfile -t ezviz-ptz-onvif:latest .
+docker build --platform linux/amd64 -f frigate-onvif/Dockerfile -t ezviz-ptz-onvif:latest .
 ```
 
 Then run one container per camera:
 
 ```sh
 docker run -d --name ptz-camera1 --restart unless-stopped \
+  --platform linux/amd64 \
   --network host \
   -e CAMERA_HOST=192.168.1.10 \
   -e CAMERA_PASSWORD=CHANGE_ME \

@@ -2,9 +2,22 @@
 
 # ---------------------------------------------------------------------------
 # Stage 1: build the ptz_control daemon against the vendor Hikvision SDK.
-# The vendor libraries are x86-64 only, so the whole image is linux/amd64.
+#
+# The vendor libraries are x86-64 only, so the image must be built for
+# linux/amd64: `docker build --platform linux/amd64 ...`. Compose and CI both
+# pass that flag. It is deliberately not pinned in FROM — a constant
+# `--platform` value is flagged by the Dockerfile build checks
+# (FromPlatformFlagConstDisallowed) and would override the requested target
+# platform. The guard below turns a wrong-architecture build into a clear
+# error instead of a linker failure.
 # ---------------------------------------------------------------------------
-FROM --platform=linux/amd64 gcc:12-bookworm AS build
+FROM gcc:12-bookworm AS build
+
+ARG TARGETARCH
+RUN if [ "$TARGETARCH" != "amd64" ]; then \
+        echo "error: the Hikvision SDK is x86-64 only; build with --platform=linux/amd64 (got $TARGETARCH)" >&2; \
+        exit 1; \
+    fi
 
 WORKDIR /src
 COPY ptz_control.cpp Makefile ./
@@ -14,7 +27,7 @@ RUN make
 # ---------------------------------------------------------------------------
 # Stage 2: runtime
 # ---------------------------------------------------------------------------
-FROM --platform=linux/amd64 python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
