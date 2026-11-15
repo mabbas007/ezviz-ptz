@@ -2,7 +2,7 @@ name: Build and publish image
 
 # Builds the linux/amd64 bridge image and pushes it to GitHub Container
 # Registry (ghcr.io). Triggers:
-#   - pull request: run the integration test only, never publish
+#   - pull request: run the Go unit tests and integration test, never publish
 #   - push to main: publish :main and :latest
 #   - push a v* tag (e.g. v0.1.0): publish :0.1.0, :0.1, :sha-...
 #   - manual run from the Actions tab (choose a branch, get a :sha-... tag)
@@ -19,13 +19,31 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  go:
+    name: Go build and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+      - name: Check formatting
+        working-directory: frigate-onvif-go
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        working-directory: frigate-onvif-go
+        run: go vet ./...
+      - name: Test
+        working-directory: frigate-onvif-go
+        run: go test -race ./...
+
   test:
     name: Integration test (fake SDK)
     runs-on: ubuntu-24.04
@@ -37,10 +55,13 @@ jobs:
 
   publish:
     name: Publish to GHCR
-    needs: test
+    needs: [go, test]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
 

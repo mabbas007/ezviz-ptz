@@ -10,11 +10,11 @@ This directory contains a small wrapper that speaks ONVIF to Frigate and the
 Hikvision SDK to the camera:
 
 ```
-Frigate ──SOAP/ONVIF──▶ app.main  (stdlib HTTP server, WS-Security auth)
-                          │
-                          ├── app.ptz     timed "relative" moves,
-                          │               MOVING/IDLE state
-                          └── UNIX socket ─▶ ptz_control serve
+Frigate ──SOAP/ONVIF──▶ /app/bridge  (Go: internal/server + internal/onvif,
+                          │             WS-Security auth)
+                          ├── internal/ptz   timed "relative" moves,
+                          │                  MOVING/IDLE state
+                          └── UNIX socket ──▶ ptz_control serve
                                                (Hikvision SDK, logs in once)
                                                     │
                                                     ▼
@@ -220,8 +220,8 @@ Consequences:
 
 ## The daemon (`ptz_control`)
 
-`app` supervises `/app/ptz_control serve`, which logs into the camera once and
-then accepts newline-terminated commands on the UNIX socket:
+The Go bridge supervises `/app/ptz_control serve`, which logs into the camera
+once and then accepts newline-terminated commands on the UNIX socket:
 
 ```
 PING                        -> PONG
@@ -249,6 +249,13 @@ the root `docker-compose.yml`.
 It builds the bridge image, starts it with `tests/fake_hcnetsdk.c`, and checks
 discovery, profiles, spaces, `MoveStatus`, status, relative and
 continuous moves, the empty preset list, and authentication.
+
+The bridge itself is Go and has unit tests for the ONVIF surface, WS-Security,
+PTZ state machine, HTTP contract and configuration:
+
+```sh
+cd frigate-onvif-go && go test ./...
+```
 
 ## Troubleshooting
 

@@ -11,7 +11,7 @@
 # platform. The guard below turns a wrong-architecture build into a clear
 # error instead of a linker failure.
 # ---------------------------------------------------------------------------
-FROM gcc:12-bookworm AS build
+FROM gcc:12-bookworm AS daemon-build
 
 ARG TARGETARCH
 RUN if [ "$TARGETARCH" != "amd64" ]; then \
@@ -25,12 +25,19 @@ COPY HCNetSDKCom ./HCNetSDKCom
 RUN make
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime
+# Stage 2: build the Go ONVIF bridge.
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm
+FROM golang:1.23-bookworm AS bridge-build
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+WORKDIR /src
+COPY frigate-onvif-go/go.mod ./
+COPY frigate-onvif-go/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/bridge ./cmd/bridge
+
+# ---------------------------------------------------------------------------
+# Stage 3: runtime
+# ---------------------------------------------------------------------------
+FROM debian:12-slim
 
 # libstdc++6 / libuuid1 are needed by the vendor SDK shared libraries.
 RUN apt-get update \
@@ -39,9 +46,9 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=build --chown=10001:10001 /src/ptz_control /app/ptz_control
-COPY --from=build --chown=10001:10001 /src/HCNetSDKCom /app/HCNetSDKCom
-COPY --chown=10001:10001 frigate-onvif/app /app/app
+COPY --from=daemon-build --chown=10001:10001 /src/ptz_control /app/ptz_control
+COPY --from=daemon-build --chown=10001:10001 /src/HCNetSDKCom /app/HCNetSDKCom
+COPY --from=bridge-build --chown=10001:10001 /out/bridge /app/bridge
 
 RUN useradd --uid 10001 --user-group --no-create-home --home-dir /app \
     --shell /usr/sbin/nologin ptz
@@ -56,7 +63,8 @@ EXPOSE 8000
 
 # The health endpoint reports 503 until the SDK daemon has logged into the
 # camera, which makes `docker ps` show when the camera connection is broken.
+# `bridge healthcheck` avoids adding curl to the runtime image.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import os, sys, urllib.request; port = os.environ.get('ONVIF_PORT', '8000'); sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:' + port + '/healthz', timeout=4).status == 200 else 1)"]
+    CMD ["/app/bridge", "healthcheck"]
 
-ENTRYPOINT ["python", "-m", "app.main"]
+ENTRYPOINT ["/app/bridge"]

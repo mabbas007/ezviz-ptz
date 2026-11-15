@@ -6,3 +6,6 @@ __pycache__/
 frigate-onvif/tests/.build/
 .env
 camera-credentials.txt
+
+# Go bridge binary
+frigate-onvif-go/bridge

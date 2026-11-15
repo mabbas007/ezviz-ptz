@@ -28,7 +28,8 @@ see [`frigate-onvif/README.md`](frigate-onvif/README.md#presets).
 | --- | --- |
 | `ptz_control.cpp` | Single binary: PTZ service (`serve`) and thin client |
 | `HikVisionExternal.pm` | ZoneMinder control module driving the binary |
-| `frigate-onvif/` | ONVIF PTZ wrapper so Frigate can autotrack EZVIZ cameras |
+| `frigate-onvif/` | ONVIF PTZ wrapper image/config so Frigate can autotrack EZVIZ cameras |
+| `frigate-onvif-go/` | Go ONVIF bridge: HTTP/SOAP server, PTZ controller, daemon supervisor |
 | `docker-compose.yml` | Runs the ONVIF wrapper for Frigate (`docker compose up -d`) |
 | `.env.example` | Camera / ONVIF settings; copy to `.env` for compose |
 | `ARCHITECTURE.md` | How the bridge, SDK daemon, tests and deployment fit together |
@@ -49,6 +50,13 @@ On macOS (Apple Silicon), build inside a Linux x86-64 container:
 The result is `./ptz_control`. Keep the `HCNetSDKCom/lib` directory next to the
 binary (next to its parent when installed): the SDK libraries are located through
 the `$ORIGIN/HCNetSDKCom/lib` rpath.
+
+The ONVIF bridge itself is Go (`frigate-onvif-go/`, standard library only) and is
+built for linux/amd64 by the Docker image. With a Go 1.23 toolchain:
+
+    cd frigate-onvif-go && go build ./... && go test ./...
+
+`make test` runs the end-to-end ONVIF suite against the image (Docker required).
 
 ## Usage
 

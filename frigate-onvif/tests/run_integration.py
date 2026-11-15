@@ -43,8 +43,6 @@ def main():
     run_command(["docker", "build", "--platform", "linux/amd64", "-t", "ptz-onvif:test", "-f", "frigate-onvif/Dockerfile", "."])
     # Build the test client
     run_command(["docker", "build", "--platform", "linux/amd64", "-t", "ptz-onvif-test-client", "-f", "frigate-onvif/tests/Dockerfile", "frigate-onvif/tests"])
-    # Build the pytest client
-    run_command(["docker", "build", "--platform", "linux/amd64", "-t", "ptz-onvif-test-pytest", "-f", "frigate-onvif/tests/Dockerfile.pytest", "frigate-onvif/tests"])
 
     for idx, cam in enumerate(cameras):
         print(f"\n{'='*40}")

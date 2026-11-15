@@ -27,9 +27,9 @@ it is talking to a PTZ-capable ONVIF camera; the bridge translates each ONVIF
 operation into SDK PTZ commands and emulates the parts ONVIF needs but the SDK
 does not provide (notably relative moves and `MoveStatus`).
 
-**The shape.** One container controls one camera. Inside the container a Python
+**The shape.** One container controls one camera. Inside the container a Go
 process serves ONVIF over HTTP and supervises a C++ daemon (`ptz_control`) that
-holds the single SDK login. The daemon and the Python process talk over a UNIX
+holds the single SDK login. The daemon and the Go bridge talk over a UNIX
 socket.
 
 ```mermaid
@@ -43,8 +43,9 @@ flowchart LR
             CT["PTZ controller<br/>timed moves, state"]
             SUP["Daemon supervisor"]
             DMN["ptz_control serve<br/>C++ · HCNetSDK"]
-            OV --> CT --> SUP --> DMN
-            SUP <-->|"UNIX socket"| DMN
+            OV --> CT
+            CT -->|"UNIX socket"| DMN
+            SUP -->|"spawn, supervise"| DMN
         end
     end
 
@@ -87,7 +88,7 @@ described in [ZoneMinder control module](#zoneminder-control-module).
 
 | Term | Meaning in this system |
 | --- | --- |
-| **ONVIF bridge** | The Python process (`frigate-onvif/app`) exposing ONVIF over HTTP. |
+| **ONVIF bridge** | The Go process (`frigate-onvif-go/cmd/bridge`) exposing ONVIF over HTTP. |
 | **SDK daemon** | `ptz_control serve`: a C++ process that logs into the camera once and executes PTZ commands from the UNIX socket. |
 | **Profile** | ONVIF media profile (`profile_1` by default). Frigate reads its PTZ configuration and spaces. |
 | **FOV relative space** | `TranslationSpaceFov`: a `RelativeMove` translation is expressed as a fraction of the current field of view (−1..1). |
@@ -104,14 +105,16 @@ described in [ZoneMinder control module](#zoneminder-control-module).
 ```mermaid
 flowchart TB
     subgraph CONTAINER["ptz-onvif container (uid 10001, linux/amd64)"]
-        MAIN["main.py<br/>ThreadingHTTPServer · routes · health"]
-        ONVIF["onvif.py<br/>SOAP dispatch · WS-Security · XML"]
-        PTZ["ptz.py<br/>PTZController state machine"]
-        SDK["sdk.py<br/>SdkClient + PtzDaemon"]
+        MAIN["cmd/bridge<br/>net/http · routes · health"]
+        ONVIF["internal/onvif<br/>SOAP dispatch · WS-Security · XML"]
+        PTZ["internal/ptz<br/>Controller state machine"]
+        SDK["internal/sdk<br/>Client + Daemon supervisor"]
         BIN["/app/ptz_control<br/>C++ daemon"]
         LIBS["/app/HCNetSDKCom<br/>vendor .so files"]
 
-        MAIN --> ONVIF --> PTZ --> SDK
+        MAIN --> ONVIF --> PTZ
+        MAIN --> SDK
+        PTZ --> SDK
         SDK -->|"spawn, supervise, restart"| BIN
         SDK <-->|"/tmp/ptz_control.sock"| BIN
         BIN -.->|"dlopen"| LIBS
@@ -122,15 +125,17 @@ flowchart TB
     BIN -->|"tcp/8000"| CAM[("camera")]
 ```
 
-### Python modules
+### Go packages
 
-| Module | Responsibility |
+| Package | Responsibility |
 | --- | --- |
-| `app/config.py` | Read and validate environment variables into an immutable-ish `Config` dataclass. Clamps speed and fails fast when `CAMERA_HOST` / `CAMERA_PASSWORD` are missing. |
-| `app/main.py` | HTTP entry point: binds `ONVIF_BIND:ONVIF_PORT`, serves SOAP POSTs and `GET /healthz`, handles signals, owns the supervisor. |
-| `app/onvif.py` | All ONVIF/SOAP logic: routing by URL suffix, WS-Security verification, XML rendering, operation dispatch, faults. |
-| `app/ptz.py` | Movement state machine: continuous moves, timed relative moves, stop, `MOVING`/`IDLE` bookkeeping. |
-| `app/sdk.py` | `SdkClient` (one newline-delimited command per UNIX-socket connection) and `PtzDaemon` (spawn, readiness, health checks, restart with backoff). |
+| `internal/config` | Read and validate environment variables into a `Config`. Clamps speed and fails fast when `CAMERA_HOST` / `CAMERA_PASSWORD` are missing or a number is malformed. |
+| `cmd/bridge` | Entry point: config, logging, signals, graceful shutdown, the `healthcheck` subcommand, and wiring the packages together. |
+| `internal/server` | HTTP front end: routing, readiness/health JSON, request size limits, `HEAD`, and handing SOAP bodies to `internal/onvif`. |
+| `internal/onvif` | All ONVIF/SOAP logic: routing by URL suffix, WS-Security verification, hand-built XML, operation dispatch, faults. |
+| `internal/ptz` | Movement state machine: continuous moves, timed relative moves, stop, `MOVING`/`IDLE` bookkeeping. |
+| `internal/sdk` | `sdk.Client` (one newline-delimited command per UNIX-socket connection) and `sdk.Daemon` (spawn, readiness, health checks, restart with backoff). |
+| `internal/logging` | Configures `log/slog` from `LOG_LEVEL`. |
 
 ### Relationship between the classes
 
@@ -139,45 +144,45 @@ classDiagram
     direction LR
 
     class Config {
-        +camera_host
-        +camera_port
-        +onvif_port
-        +from_env() Config
+        +CameraHost
+        +CameraPort
+        +OnvifPort
+        +Load()
     }
 
-    class OnvifApp {
-        +handle(path, body, host) tuple
-        -_authorized(root) bool
-        -_service_for_path(path) str
+    class App {
+        +Handle(path, body, host)
+        -authorized(root) bool
+        -serviceForPath(path) string
     }
 
-    class PTZController {
-        +moving bool
-        +pan_tilt_moving bool
-        +zoom_moving bool
-        +continuous_move(pan, tilt, zoom, speed)
-        +relative_move(pan, tilt, zoom, speed)
-        +stop()
+    class Controller {
+        +Moving() bool
+        +PanTiltMoving() bool
+        +ZoomMoving() bool
+        +ContinuousMove(pan, tilt, zoom, speed)
+        +RelativeMove(pan, tilt, zoom, speed)
+        +Stop()
     }
 
-    class SdkClient {
-        +ping() bool
-        +command(direction, action, speed) str
+    class Client {
+        +Ping() bool
+        +Command(direction, action, speed)
     }
 
-    class PtzDaemon {
-        +start()
-        +stop()
-        +running bool
-        +status() dict
+    class Daemon {
+        +Start()
+        +Stop()
+        +Running() bool
+        +Status()
     }
 
-    OnvifApp --> PTZController
-    OnvifApp --> Config
-    PTZController --> SdkClient
-    PTZController --> Config
-    PtzDaemon --> SdkClient
-    PtzDaemon --> Config
+    App --> Controller
+    App --> Config
+    Controller --> Client
+    Controller --> Config
+    Daemon --> Client
+    Daemon --> Config
 ```
 
 ### The C++ daemon (`ptz_control`)
@@ -190,7 +195,7 @@ One binary, two modes:
   command per connection.
 - **Client mode** — `ptz_control <CMD> <START|STOP> [speed] [socket]`,
   `ptz_control POS [socket]`, `ptz_control PING [socket]`. Used by the
-  ZoneMinder module and for manual debugging; the Python bridge talks to the
+  ZoneMinder module and for manual debugging; the Go bridge talks to the
   socket directly instead of spawning a client per command.
 
 Socket path resolution: explicit argument → `PTZ_SOCK` → `/tmp/ptzd.socket`.
@@ -207,16 +212,16 @@ unlinked at startup.
 sequenceDiagram
     autonumber
     participant DC as docker compose
-    participant M as app.main
-    participant H as HTTP server
-    participant D as PtzDaemon
+    participant M as cmd/bridge
+    participant H as net/http server
+    participant D as sdk.Daemon
     participant B as ptz_control
     participant C as camera
 
-    DC->>M: python -m app.main
-    M->>M: Config.from_env() + logging
+    DC->>M: /app/bridge
+    M->>M: config.Load() + logging.Setup()
     M->>H: bind ONVIF_BIND:ONVIF_PORT
-    M->>D: start()
+    M->>D: Start()
     D->>B: spawn serve host port user pass socket
     B->>C: NET_DVR_Init + NET_DVR_Login_V30
     alt login succeeds
@@ -230,8 +235,8 @@ sequenceDiagram
         B-->>D: PONG
     end
     D->>D: mark ready, reset backoff
-    M->>H: serve_forever()
-    M-->>DC: "ONVIF PTZ bridge listening on ..."
+    M->>H: ListenAndServe()
+    M-->>DC: "Starting ONVIF server on ..."
 ```
 
 Notes:
@@ -257,8 +262,9 @@ Notes:
 - `200` while the supervised daemon process is alive.
 - `503` when the daemon is down or restarting (for example after a failed SDK
   login; the process exits and the supervisor schedules a retry).
-- The Dockerfile `HEALTHCHECK` polls this endpoint on `ONVIF_PORT`, which is
-  why `docker ps` shows `unhealthy` when the camera link is broken.
+- The Dockerfile `HEALTHCHECK` runs `/app/bridge healthcheck`, which polls this
+  endpoint on `ONVIF_PORT` (no curl or Python in the image), which is why
+  `docker ps` shows `unhealthy` when the camera link is broken.
 
 A daemon that stops answering `PING` three times in a row is terminated and
 restarted; spawn failures use exponential backoff (1 s doubling to 60 s).
@@ -273,8 +279,8 @@ restarted; spawn failures use exponential backoff (1 s doubling to 60 s).
 sequenceDiagram
     autonumber
     participant F as Frigate
-    participant O as OnvifApp
-    participant P as PTZController
+    participant O as onvif.App
+    participant P as ptz.Controller
 
     F->>O: GetServices (device_service)
     O-->>F: XAddrs for device, media, ptz
@@ -305,9 +311,9 @@ Frigate reads those spaces and disables autotracking zoom by itself.
 sequenceDiagram
     autonumber
     participant F as Frigate
-    participant O as OnvifApp
-    participant P as PTZController
-    participant S as SdkClient
+    participant O as onvif.App
+    participant P as ptz.Controller
+    participant S as sdk.Client
     participant B as ptz_control
     participant C as camera
 
@@ -440,14 +446,18 @@ Static identifiers:
 | Video source / source config / encoder config | `vs_1`, `vsc_1`, `vec_1` |
 | PTZ config / node | `ptz_config_1`, `ptz_node_1` |
 
-Unsupported operations return a SOAP fault (`ter:ActionNotSupported`); malformed
-XML or missing credentials produce `env:Sender` / `ter:NotAuthorized`.
-Requests are capped at 1 MiB.
+Faults are spec-shaped SOAP 1.2 envelopes: ONVIF `ter:` codes are subcodes of
+`env:Sender` / `env:Receiver` (for example `env:Sender` + `ter:NotAuthorized`),
+without the bogus `ActionNotSupported` subcode the Python bridge attached to
+every fault. Unsupported operations return `ter:ActionNotSupported`; malformed
+XML returns `env:Sender`; bad credentials return `ter:NotAuthorized`. Requests
+are capped at 1 MiB.
 
-`GetStatus` always returns `Position(0, 0)` because the SDK position is not
-exposed through this path; only `MoveStatus` and `UtcTime` are meaningful. This
-is sufficient for Frigate, which seeds the `RelativeMove` translation from the
-returned `PanTilt` element and overwrites `x`/`y`.
+`GetStatus` always returns `Position(0, 0)` without a `space` attribute: the
+bridge advertises no absolute position space and the SDK position is not usable
+feedback. Only `MoveStatus` and `UtcTime` are meaningful. This is sufficient for
+Frigate, which seeds the `RelativeMove` translation from the returned `PanTilt`
+element and overwrites `x`/`y`.
 
 ---
 
@@ -490,30 +500,30 @@ non-empty; leave both empty to accept anonymous clients (not recommended).
 
 ```mermaid
 flowchart LR
-    subgraph Threads
-        A["HTTP request threads<br/>(ThreadingHTTPServer)"]
-        B["ptz-daemon<br/>supervisor"]
-        C["ptz-relative-move<br/>(one per relative move)"]
-        D["ptz-daemon-log<br/>(stdout pump)"]
+    subgraph Goroutines
+        A["HTTP request handlers<br/>(net/http)"]
+        B["PTZ daemon<br/>supervisor"]
+        C["timed relative move<br/>(one per move)"]
+        D["ptz_control output pump"]
     end
 
-    A -->|"SdkClient._lock"| S["UNIX socket"]
-    C -->|"SdkClient._lock"| S
+    A -->|"sdk.Client mutex"| S["UNIX socket"]
+    C -->|"sdk.Client mutex"| S
     B --> L["process lifecycle"]
 ```
 
-- **HTTP** — one thread per request; handlers may block on the SDK socket.
-- **SDK calls** — serialized by `SdkClient._lock`; one connection per command,
-  5 s timeout. An empty reply or `ERR` becomes `SdkError`, which surfaces as a
-  SOAP fault or a log line.
-- **PTZ state** — `PTZController._lock` (RLock) guards `_active`, `_timed` and
-  `_cancel`. The timed thread checks ownership before stopping a direction so a
-  newer command is never interrupted by an older one.
-- **Supervisor** — a dedicated thread loops on `HEALTH_INTERVAL`, checks
+- **HTTP** — one goroutine per request; handlers may block on the SDK socket.
+- **SDK calls** — serialized by a mutex in `sdk.Client`; one connection per
+  command, 5 s timeout. An empty reply or `ERR` becomes an error, which
+  surfaces as a SOAP fault or a log line.
+- **PTZ state** — the `ptz.Controller` mutex guards `active`, `timed` and
+  `cancel`. The timed goroutine checks ownership before stopping a direction so
+  a newer command is never interrupted by an older one.
+- **Supervisor** — a dedicated goroutine loops on `HEALTH_INTERVAL`, checks
   `PING`, and restarts the daemon after three consecutive failures. Spawn
   attempts are retried with exponential backoff, capped at 60 s.
-- **Shutdown** — `SIGTERM`/`SIGINT` triggers `server.shutdown()`; `finally`
-  stops the daemon (`SIGTERM`, then `SIGKILL` after 5 s) and closes the server.
+- **Shutdown** — `SIGTERM`/`SIGINT` drains the HTTP server (8 s) and stops the
+  daemon (`SIGTERM`, then `SIGKILL` after 5 s), within compose's 15 s grace.
 
 Failure matrix:
 
@@ -532,12 +542,14 @@ Failure matrix:
 
 - **ONVIF authentication** — WS-Security `UsernameToken`; `PasswordText` or
   `PasswordDigest` (`base64(SHA1(nonce + created + password))`). Comparison is
-  constant-time (`hmac.compare_digest`). Missing/invalid credentials return
-  `ter:NotAuthorized`.
+  constant-time (`crypto/subtle`). Missing/invalid credentials return
+  `ter:NotAuthorized` as a spec-shaped SOAP fault. Only WS-Security is
+  implemented, so device capabilities advertise `HttpDigest="false"` rather
+  than claiming it (unlike the old Python bridge).
 - **Transport** — plain HTTP inside the LAN; there is no TLS listener. Put the
   bridge on a trusted network or behind a reverse proxy if that matters.
-- **Container** — runs as uid 10001 with no shell/home; only the daemon and
-  Python app are present.
+- **Container** — runs as uid 10001 with no home and a nologin shell; the Go
+  bridge and `ptz_control` are the only application processes.
 - **UNIX socket** — `chmod 0666` inside the container, so any process in the
   container can control PTZ; there are no other processes by design.
 - **Secrets** — camera credentials and ONVIF credentials come from the
@@ -588,7 +600,7 @@ GitHub Actions publishes `ghcr.io/mabbas007/ezviz-ptz` (tags `latest`, `main`,
 
 ### ZoneMinder control module
 
-A second, independent consumer of `ptz_control` — no Python or container
+A second, independent consumer of `ptz_control` — no Go bridge or container
 involved:
 
 ```mermaid
@@ -612,24 +624,32 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    PR["Pull request"] --> TEST["Integration test<br/>fake HCNetSDK + onvif-zeep-async 4.3.0"]
-    MAIN["Push main"] --> TEST
-    TAG["Push v* tag"] --> TEST
-    MAN["Manual dispatch"] --> TEST
-    TEST -->|"all 34 checks"| BUILD["buildx<br/>linux/amd64"]
+    PR["Pull request"] --> GO["Go build · vet · unit tests<br/>gofmt + go test -race"]
+    MAIN["Push main"] --> GO
+    TAG["Push v* tag"] --> GO
+    MAN["Manual dispatch"] --> GO
+    PR --> TEST["Integration test<br/>fake HCNetSDK + onvif-zeep-async 4.3.0"]
+    MAIN --> TEST
+    TAG --> TEST
+    MAN --> TEST
+    GO --> BUILD["buildx<br/>linux/amd64"]
+    TEST -->|"all checks pass"| BUILD
     BUILD --> GHCR[("ghcr.io/mabbas007/ezviz-ptz")]
 ```
 
 - **Image build** — multi-stage: `gcc:12-bookworm` compiles `ptz_control`
-  against `HCNetSDKCom/`; `python:3.12-slim-bookworm` is the runtime, with the
-  binary and vendor libs at `/app` so `$ORIGIN/HCNetSDKCom/lib` resolves.
+  against `HCNetSDKCom/`, `golang:1.23-bookworm` builds a static bridge binary,
+  and `debian:12-slim` is the runtime, with the binary and vendor libs at
+  `/app` so `$ORIGIN/HCNetSDKCom/lib` resolves.
+- **Go checks** — `go vet ./...` and `go test -race ./...` run on every pull
+  request; `gofmt -l .` must be empty.
 - **Tests** — `frigate-onvif/tests/run.sh` validates the compose file, builds a
   fake HCNetSDK (`LD_PRELOAD`), starts the real image, waits for health, and
   drives it with Frigate's pinned ONVIF client. Covered: discovery via
   `GetServices`, capabilities, profiles, spaces, `MoveStatus`, relative and
   continuous moves, zoom axis, the empty preset list, `AbsoluteMove` fault and
   auth failure.
-- **Publish** — only after the test job passes; uses `GITHUB_TOKEN` with
+- **Publish** — only after the Go and integration jobs pass; uses `GITHUB_TOKEN` with
   `packages: write`; tags come from `docker/metadata-action`.
 
 ---
@@ -643,7 +663,7 @@ flowchart LR
 | Emulate relative moves with timed start/stop | The SDK has no relative-move primitive | Open-loop, tuning-dependent, pan and tilt sequential |
 | Advertise no absolute or zoom position spaces | Prevents Frigate from using operations the bridge cannot honor | No absolute positioning; Frigate disables zoom autotracking |
 | Report no presets instead of storing them | The camera rejects every SDK preset operation (`NET_DVR_NETWORK_ERRORDATA`, all 300 slots) and exposes no ISAPI endpoint, so no implementation can work | Frigate's `return_preset` is unusable; the camera does not return home after tracking |
-| Python stdlib HTTP server | Tiny dependency surface and image | No HTTP/2, TLS, or WSDL serving; one SOAP op per POST |
+| Go standard library HTTP server | Single static binary, no third-party Go dependencies, small image | No HTTP/2, TLS or WSDL serving; one SOAP op per POST |
 | No WS-Discovery | Frigate uses explicit host/port; discovery adds UDP/broadcast complexity | Discovery-based tools cannot auto-find the bridge |
 | Static media profile metadata | Frigate only needs a plausible profile and the PTZ config | `GetStreamUri` is a placeholder unless `RTSP_URL` is set |
 | Health = supervisor state | Makes broken camera links visible in `docker ps` | Brief `200` while the daemon is still logging in |
@@ -686,11 +706,13 @@ flowchart LR
 | `ptz_control.cpp` | SDK daemon and command-line client |
 | `HikVisionExternal.pm` | ZoneMinder control module |
 | `HCNetSDKCom/` | Vendor headers and shared libraries (Linux x86-64) |
-| `frigate-onvif/app/config.py` | Environment configuration |
-| `frigate-onvif/app/main.py` | HTTP server, health, signals |
-| `frigate-onvif/app/onvif.py` | ONVIF/SOAP implementation |
-| `frigate-onvif/app/ptz.py` | Movement state machine |
-| `frigate-onvif/app/sdk.py` | Daemon client and supervisor |
+| `frigate-onvif-go/internal/config` | Environment configuration and validation |
+| `frigate-onvif-go/cmd/bridge` | Entry point, healthcheck subcommand, signals |
+| `frigate-onvif-go/internal/server` | HTTP server, routing, health, limits |
+| `frigate-onvif-go/internal/onvif` | ONVIF/SOAP implementation |
+| `frigate-onvif-go/internal/ptz` | Movement state machine |
+| `frigate-onvif-go/internal/sdk` | Daemon client and supervisor |
+| `frigate-onvif-go/internal/logging` | `LOG_LEVEL` setup |
 | `frigate-onvif/Dockerfile` | Multi-stage amd64 image |
 | `frigate-onvif/tests/` | Fake SDK, image test, Frigate-style client |
 | `frigate-onvif/tests/fake_hcnetsdk.c` | `LD_PRELOAD` stub of the SDK |
