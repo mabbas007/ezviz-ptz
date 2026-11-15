@@ -264,10 +264,14 @@ Notes:
   login; the process exits and the supervisor schedules a retry).
 - The Dockerfile `HEALTHCHECK` runs `/app/bridge healthcheck`, which polls this
   endpoint on `ONVIF_PORT` (no curl or Python in the image), which is why
-  `docker ps` shows `unhealthy` when the camera link is broken.
+  `docker ps` shows `unhealthy` while the daemon is down or restarting.
 
-A daemon that stops answering `PING` three times in a row is terminated and
-restarted; spawn failures use exponential backoff (1 s doubling to 60 s).
+The supervisor probes the camera every `HEALTH_INTERVAL` by sending `POS`
+through the daemon. `PING` only proves the UNIX socket is alive; `POS`
+exercises the SDK session, so it also detects a camera link that dropped after
+login. Three consecutive probe failures terminate the daemon and force a fresh
+login; spawn failures use exponential backoff (1 s doubling to 60 s). `PING` is
+still used only for startup readiness.
 
 ---
 
@@ -474,8 +478,9 @@ connection:
 | `LEFT STOP` | `OK` or `ERR <code>` |
 | `RIGHT`, `UP`, `DOWN`, `ZOOM_IN`, `ZOOM_OUT` | same as above |
 
-Speed defaults to the SDK's default when omitted. `POS` is implemented but not
-used by the bridge today: the camera answers `0 0 0`.
+Speed defaults to the SDK's default when omitted. `POS` is used as the
+camera-aware health probe; on the tested hardware it answers `0 0 0`, but an
+unreachable camera returns `ERR <code>`.
 
 ---
 
@@ -519,9 +524,10 @@ flowchart LR
 - **PTZ state** — the `ptz.Controller` mutex guards `active`, `timed` and
   `cancel`. The timed goroutine checks ownership before stopping a direction so
   a newer command is never interrupted by an older one.
-- **Supervisor** — a dedicated goroutine loops on `HEALTH_INTERVAL`, checks
-  `PING`, and restarts the daemon after three consecutive failures. Spawn
-  attempts are retried with exponential backoff, capped at 60 s.
+- **Supervisor** — a dedicated goroutine loops on `HEALTH_INTERVAL`, probes the
+  camera through the daemon with `POS`, and restarts the daemon after three
+  consecutive failures. Spawn attempts are retried with exponential backoff,
+  capped at 60 s.
 - **Shutdown** — `SIGTERM`/`SIGINT` drains the HTTP server (8 s) and stops the
   daemon (`SIGTERM`, then `SIGKILL` after 5 s), within compose's 15 s grace.
 
@@ -531,7 +537,8 @@ Failure matrix:
 | --- | --- | --- |
 | Wrong camera credentials | daemon exits with `Login failed 1` | supervisor retries with backoff; `/healthz` 503 while down |
 | Camera unreachable | daemon exits with `Login failed 7` | same; the ONVIF server stays up so profiles remain readable |
-| Daemon hangs | `PING` times out | after 3 checks it is terminated and restarted |
+| Daemon hangs | `POS` probe times out | after 3 checks it is terminated and restarted |
+| Camera link drops after login | `POS` returns `ERR` | after 3 probes the daemon is restarted and logs in again |
 | ONVIF port busy | startup log warning | server attempts to bind and fails, container restarts |
 | Bad SOAP / unknown operation | SOAP fault | request fails; server stays up |
 | Camera moves out of range | no detection | open-loop moves have no position feedback |

@@ -162,14 +162,20 @@ func (d *Daemon) supervise() {
 	}
 }
 
-// healthy pings the daemon. Three consecutive failures restart the process.
+// healthy probes the camera through the daemon. PING alone only proves the
+// UNIX socket is alive, so use POS to detect a dropped SDK/camera connection as
+// well. Three consecutive failures restart the process and force a fresh login.
 func (d *Daemon) healthy() bool {
-	if d.client.Ping() {
-		d.failures = 0
-		return true
+	if err := d.client.CameraProbe(); err != nil {
+		d.failures++
+		slog.Warn("PTZ camera health probe failed",
+			"err", err,
+			"consecutive", d.failures,
+		)
+		return d.failures < 3
 	}
-	d.failures++
-	return d.failures < 3
+	d.failures = 0
+	return true
 }
 
 func (d *Daemon) spawn() bool {

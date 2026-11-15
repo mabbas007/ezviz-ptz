@@ -178,7 +178,7 @@ the variables above.
 | `MIN_MOVE_SECONDS` | `0.10` | Shortest timed move (keeps tiny corrections from being dropped). |
 | `MAX_MOVE_SECONDS` | `4.0` | Longest timed move; also bounds how long `MOVING` can last. |
 | `STARTUP_TIMEOUT` | `20` | Seconds to wait for the SDK login at startup. |
-| `HEALTH_INTERVAL` | `20` | Seconds between daemon health checks. |
+| `HEALTH_INTERVAL` | `20` | Seconds between camera health probes (`POS` through the daemon). |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, … |
 | `PTZ_SOCK` | `/tmp/ptz_control.sock` | UNIX socket for the SDK daemon (inside the container). |
 | `PTZ_BINARY` | `/app/ptz_control` | Path to the SDK daemon binary. |
@@ -230,10 +230,11 @@ LEFT START [speed]          -> OK | ERR <code>
 LEFT STOP                   -> OK | ERR <code>
 ```
 
-If the daemon dies or stops answering `PING` three times in a row, it is
-restarted with exponential backoff. If the camera is unreachable, the ONVIF
-server stays up (Frigate can still read the profile) and `/healthz` reports
-`degraded`.
+If the daemon dies, or three consecutive camera probes (`POS` through the SDK)
+fail, it is restarted with exponential backoff; a restart forces a fresh camera
+login. If the camera is unreachable, the ONVIF server stays up (Frigate can
+still read the profile) and `/healthz` reports `degraded` while the daemon is
+down or restarting.
 
 ## Tests
 

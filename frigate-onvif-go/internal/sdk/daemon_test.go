@@ -37,6 +37,7 @@ func TestDaemonHelperProcess(t *testing.T) {
 	}
 
 	exitOn := os.Getenv("PTZ_HELPER_EXIT_ON")
+	posErr := os.Getenv("PTZ_HELPER_POS_ERR") == "1"
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -56,7 +57,11 @@ func TestDaemonHelperProcess(t *testing.T) {
 			case message == "PING":
 				fmt.Fprintln(conn, "PONG")
 			case strings.HasPrefix(message, "POS"):
-				fmt.Fprintln(conn, "POS 0 0 0")
+				if posErr {
+					fmt.Fprintln(conn, "ERR 7")
+				} else {
+					fmt.Fprintln(conn, "POS 0 0 0")
+				}
 			default:
 				fmt.Fprintln(conn, "OK")
 			}
@@ -192,6 +197,37 @@ func TestDaemonStopImmediately(t *testing.T) {
 			t.Fatalf("iteration %d: Status() = %+v after Stop", i, status)
 		}
 	}
+}
+
+func TestDaemonRestartsWhenCameraProbeFails(t *testing.T) {
+	socket := shortSocketPath(t)
+	cfg := testDaemonConfig(socket)
+	cfg.HealthInterval = 0.05
+
+	client := NewClient(socket, 2*time.Second)
+	daemon := NewDaemon(cfg, client)
+
+	var spawns int32
+	daemon.newCommand = func() *exec.Cmd {
+		atomic.AddInt32(&spawns, 1)
+		cmd := exec.Command(os.Args[0], "-test.run=TestDaemonHelperProcess")
+		cmd.Env = append(os.Environ(),
+			"PTZ_HELPER=1",
+			"PTZ_HELPER_SOCK="+socket,
+			"PTZ_HELPER_POS_ERR=1",
+		)
+		return cmd
+	}
+
+	daemon.Start()
+	t.Cleanup(daemon.Stop)
+
+	// PING still succeeds, but the camera probe returns ERR 7. The supervisor
+	// must treat that as an unhealthy camera and restart the daemon.
+	waitFor(t, 5*time.Second, "the daemon to answer PING", client.Ping)
+	waitFor(t, 5*time.Second, "a restart triggered by the camera probe", func() bool {
+		return atomic.LoadInt32(&spawns) >= 2
+	})
 }
 
 func TestDaemonStartupTimeout(t *testing.T) {

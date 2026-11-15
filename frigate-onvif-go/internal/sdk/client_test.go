@@ -142,6 +142,42 @@ func TestClientMissingSocket(t *testing.T) {
 	}
 }
 
+func TestClientCameraProbe(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		path := shortSocketPath(t)
+		serveSocket(t, path, func(message string) string {
+			if message == "POS" {
+				return "POS 1 2 3"
+			}
+			return "ERR 7"
+		})
+
+		if err := NewClient(path, time.Second).CameraProbe(); err != nil {
+			t.Fatalf("CameraProbe() = %v, want nil", err)
+		}
+	})
+
+	t.Run("daemon error", func(t *testing.T) {
+		path := shortSocketPath(t)
+		serveSocket(t, path, func(string) string { return "ERR 7" })
+
+		err := NewClient(path, time.Second).CameraProbe()
+		if err == nil || !strings.Contains(err.Error(), "ERR 7") {
+			t.Fatalf("CameraProbe() = %v, want the daemon error", err)
+		}
+	})
+
+	t.Run("unexpected reply", func(t *testing.T) {
+		path := shortSocketPath(t)
+		serveSocket(t, path, func(string) string { return "OK" })
+
+		err := NewClient(path, time.Second).CameraProbe()
+		if err == nil || !strings.Contains(err.Error(), "unexpected POS reply") {
+			t.Fatalf("CameraProbe() = %v, want an unexpected-reply error", err)
+		}
+	})
+}
+
 func TestClientTimesOut(t *testing.T) {
 	path := shortSocketPath(t)
 	serveSocket(t, path, func(string) string {

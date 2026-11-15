@@ -70,6 +70,21 @@ func (c *Client) Ping() bool {
 	return err == nil && reply == "PONG"
 }
 
+// CameraProbe verifies that the daemon can still reach the camera by asking it
+// for the current PTZ position. PING only proves the UNIX socket is alive; POS
+// exercises the SDK session, so it also detects a camera link that dropped
+// after login.
+func (c *Client) CameraProbe() error {
+	reply, err := c.call("POS")
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(reply, "POS") {
+		return fmt.Errorf("unexpected POS reply %q", reply)
+	}
+	return nil
+}
+
 // Command sends "<DIRECTION> <START|STOP> [speed]".
 //
 // The speed is only appended for START, like the Python client. Any ERR reply
