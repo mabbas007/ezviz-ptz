@@ -4,6 +4,7 @@ FROM python:3.12-slim-bookworm
 
 RUN pip install --no-cache-dir onvif-zeep-async==4.3.0
 
+# The test script is copied from the same directory as this Dockerfile
 COPY test_frigate_init.py /test_frigate_init.py
 
 ENTRYPOINT ["python", "-u", "/test_frigate_init.py"]

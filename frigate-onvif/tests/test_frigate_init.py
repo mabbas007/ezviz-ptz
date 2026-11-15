@@ -213,22 +213,25 @@ async def main() -> int:
         await wait_until_idle(ptz, expect_moving=False)
 
         # --- continuous zoom reports its own MoveStatus axis ----------------
-        move_request.Velocity = {"Zoom": {"x": 0.5}}
-        await ptz.ContinuousMove(move_request)
-        moving = await ptz.GetStatus({"ProfileToken": PROFILE_TOKEN})
-        check(
-            moving.MoveStatus.Zoom == "MOVING",
-            "continuous zoom makes GetStatus report Zoom MOVING",
-        )
-        await ptz.Stop(
-            {"ProfileToken": PROFILE_TOKEN, "PanTilt": True, "Zoom": True}
-        )
-        await wait_until_idle(ptz, expect_moving=False)
-        zoom_idle = await ptz.GetStatus({"ProfileToken": PROFILE_TOKEN})
-        check(
-            zoom_idle.MoveStatus.Zoom == "IDLE",
-            "Stop makes GetStatus report Zoom IDLE",
-        )
+        if not getattr(options.Spaces, "RelativeZoomTranslationSpace", None):
+            print("  .. skipping zoom tests (not supported by camera)")
+        else:
+            move_request.Velocity = {"Zoom": {"x": 0.5}}
+            await ptz.ContinuousMove(move_request)
+            moving = await ptz.GetStatus({"ProfileToken": PROFILE_TOKEN})
+            check(
+                moving.MoveStatus.Zoom == "MOVING",
+                "continuous zoom makes GetStatus report Zoom MOVING",
+            )
+            await ptz.Stop(
+                {"ProfileToken": PROFILE_TOKEN, "PanTilt": True, "Zoom": True}
+            )
+            await wait_until_idle(ptz, expect_moving=False)
+            zoom_idle = await ptz.GetStatus({"ProfileToken": PROFILE_TOKEN})
+            check(
+                zoom_idle.MoveStatus.Zoom == "IDLE",
+                "Stop makes GetStatus report Zoom IDLE",
+            )
 
         # --- unsupported absolute move must fail cleanly --------------------
         try:
