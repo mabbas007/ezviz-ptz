@@ -1,0 +1,84 @@
+name: Build and publish image
+
+# Builds the linux/amd64 bridge image and pushes it to GitHub Container
+# Registry (ghcr.io). Triggers:
+#   - pull request: run the integration test only, never publish
+#   - push to main: publish :main and :latest
+#   - push a v* tag (e.g. v0.1.0): publish :0.1.0, :0.1, :sha-...
+#   - manual run from the Actions tab (choose a branch, get a :sha-... tag)
+#
+# Nothing needs to be configured in the repository: GITHUB_TOKEN is enough.
+# The first run creates the package; see the README for visibility/auth.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Integration test (fake SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the ONVIF end-to-end test
+        run: ./frigate-onvif/tests/run.sh
+
+  publish:
+    name: Publish to GHCR
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          # The repository owner; GITHUB_TOKEN is scoped to this repository.
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=EZVIZ/Hikvision ONVIF PTZ bridge
+            org.opencontainers.image.description=ONVIF PTZ server that drives EZVIZ/Hikvision cameras through the Hikvision SDK
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: frigate-onvif/Dockerfile
+          # The Hikvision SDK ships x86-64 Linux libraries only.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,8 @@
+ptz_control
+.ref/
+.testtmp/
+__pycache__/
+*.pyc
+frigate-onvif/tests/.build/
+.env
+camera-credentials.txt

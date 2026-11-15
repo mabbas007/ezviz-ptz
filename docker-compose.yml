@@ -1,0 +1,69 @@
+# EZVIZ / Hikvision -> ONVIF PTZ bridge for Frigate.
+#
+#   cp .env.example .env      # fill in the camera details
+#   docker compose up -d --build
+#
+# Then point Frigate's `onvif.host` / `onvif.port` at this container and turn
+# on autotracking. See README.md ("Frigate (ONVIF autotracking)").
+#
+# One service controls exactly one camera: Frigate's `onvif.host`/`onvif.port`
+# cannot carry a path, so a second camera needs a second service with its own
+# name, ONVIF_PORT and CAMERA_*. See frigate-onvif/docker-compose.example.yml.
+
+name: ezviz-ptz-onvif
+
+x-ptz-service: &ptz-service
+  build:
+    context: .
+    dockerfile: frigate-onvif/Dockerfile
+  image: ezviz-ptz-onvif:latest
+  # The vendor Hikvision SDK ships x86-64 libraries only.
+  platform: linux/amd64
+  restart: unless-stopped
+  # The daemon gets SIGTERM and unlinks its socket before the container stops.
+  stop_grace_period: 15s
+  environment: &ptz-environment
+    # --- camera (Hikvision SDK, port 8000 -- not RTSP/HTTP) --------------
+    CAMERA_HOST: ${CAMERA_HOST:?set CAMERA_HOST in .env}
+    CAMERA_PORT: ${CAMERA_PORT:-8000}
+    CAMERA_USER: ${CAMERA_USER:-admin}
+    # The EZVIZ "verification code" printed on the camera label.
+    CAMERA_PASSWORD: ${CAMERA_PASSWORD:?set CAMERA_PASSWORD in .env}
+
+    # --- ONVIF server (what Frigate connects to) -------------------------
+    ONVIF_PORT: ${ONVIF_PORT:-8081}
+    ONVIF_USER: ${ONVIF_USER:-}
+    ONVIF_PASSWORD: ${ONVIF_PASSWORD:-}
+    ONVIF_ADVERTISE_HOST: ${ONVIF_ADVERTISE_HOST:-}
+
+    # --- movement tuning (see README) ------------------------------------
+    PTZ_SPEED: ${PTZ_SPEED:-4}
+    PAN_SECONDS_PER_FOV: ${PAN_SECONDS_PER_FOV:-0.9}
+    TILT_SECONDS_PER_FOV: ${TILT_SECONDS_PER_FOV:-0.7}
+    PTZ_ZOOM: ${PTZ_ZOOM:-true}
+
+    # --- housekeeping ----------------------------------------------------
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+    # Not listed above because they rarely need changing; add them here
+    # (and to .env) only if required: MIN_MOVE_SECONDS, MAX_MOVE_SECONDS,
+    # STARTUP_TIMEOUT, HEALTH_INTERVAL, ONVIF_BIND, PROFILE_TOKEN,
+    # VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, RTSP_URL.
+    # See frigate-onvif/README.md ("Environment variables").
+
+services:
+  ptz:
+    <<: *ptz-service
+    container_name: ${CONTAINER_NAME:-ptz-onvif}
+    ports:
+      # host:container. Frigate uses ${ONVIF_PORT} on the Docker host.
+      - "${ONVIF_PORT:-8081}:${ONVIF_PORT:-8081}"
+    # If Frigate and this container share a compose network you can drop
+    # `ports` and use `onvif.host: ptz` + `onvif.port: 8081` instead.
+    #
+    # If Frigate itself uses `network_mode: host`, replace `ports` with
+    # `network_mode: host` here and use `onvif.host: 127.0.0.1`.
+    #
+    # The HEALTHCHECK from the Dockerfile reports 503 (and `docker ps` shows
+    # `unhealthy`) while the SDK cannot log into the camera, so a broken
+    # camera link is visible without reading logs.

@@ -1,0 +1,10 @@
+.git
+.ref
+.testtmp
+.DS_Store
+.env
+__pycache__
+**/__pycache__
+*.pyc
+frigate-onvif/tests
+ptz_control

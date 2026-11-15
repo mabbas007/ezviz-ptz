@@ -1,0 +1,67 @@
+# Optional: attach one wrapper container per camera to an existing Frigate
+# compose project. This is the "several cameras" variant of the root
+# docker-compose.yml; use whichever suits your setup.
+#
+# Build the image once from the repository root:
+#
+#     docker compose build            # or:
+#     docker build -f frigate-onvif/Dockerfile -t ezviz-ptz-onvif:latest .
+#
+# Then merge the services below into the compose file you use for Frigate.
+# They join Frigate's default network, so Frigate can address them by service
+# name and `ports` is not needed:
+#
+#     onvif:
+#       host: ptz-camera1           # service name
+#       port: 8081                  # ONVIF_PORT
+#
+# If you would rather keep this file separate, run it from this directory:
+#
+#     docker compose -f frigate-onvif/docker-compose.example.yml up -d
+#
+# and point Frigate at the Docker host instead (see README.md).
+#
+# One container controls exactly one camera: Frigate's `onvif.host` and
+# `onvif.port` cannot carry a URL path. Add a third service for a third camera.
+#
+# The example below uses two cameras on distinct ONVIF ports; when merged into
+# Frigate's compose file the ports only need to be unique inside the network.
+#
+# Only three settings matter per camera: CAMERA_HOST, CAMERA_PASSWORD and
+# ONVIF_PORT. Everything else has a default; the advanced variables are listed
+# in frigate-onvif/README.md and can be added to `environment:` when needed.
+
+x-ptz-common: &ptz-common
+  image: ezviz-ptz-onvif:latest
+  platform: linux/amd64
+  restart: unless-stopped
+  stop_grace_period: 15s
+
+services:
+  ptz-camera1:
+    <<: *ptz-common
+    container_name: ptz-camera1
+    environment:
+      CAMERA_HOST: 192.168.1.10        # camera LAN address
+      CAMERA_PASSWORD: CHANGE_ME       # EZVIZ verification code, not the account password
+      ONVIF_PORT: "8081"
+      ONVIF_USER: frigate
+      ONVIF_PASSWORD: CHANGE_ME
+      PTZ_ZOOM: "false"                # no zoom motor on EZVIZ C8C-class cameras
+    # Only needed when this file is used standalone (not merged), so Frigate
+    # can reach the container from the host:
+    ports:
+      - "8081:8081"
+
+  ptz-camera2:
+    <<: *ptz-common
+    container_name: ptz-camera2
+    environment:
+      CAMERA_HOST: 192.168.1.11
+      CAMERA_PASSWORD: CHANGE_ME
+      ONVIF_PORT: "8082"
+      ONVIF_USER: frigate
+      ONVIF_PASSWORD: CHANGE_ME
+      PTZ_ZOOM: "false"
+    ports:
+      - "8082:8082"
