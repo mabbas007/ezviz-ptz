@@ -198,6 +198,11 @@ Bumping `VERSION` to `2` and pushing publishes `2.0`, moves `:2` and `:latest`,
 and leaves `:1` at the last 1.x build. Re-running a workflow for the same commit
 publishes the same version again.
 
+After the image push succeeds, the workflow also creates a **GitHub Release**
+tagged `vX.Y` at that commit with generated release notes. Re-runs reuse an
+existing release instead of failing. Image tags do not carry the `v` prefix
+(`1.42`), while Git tags and releases do (`v1.42`).
+
 To run the published image, replace the `build:` block in `docker-compose.yml`
 with the image:
 

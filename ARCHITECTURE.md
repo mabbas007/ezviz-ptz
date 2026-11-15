@@ -651,7 +651,8 @@ flowchart LR
   `main`; uses `GITHUB_TOKEN` with `packages: write`. The major version comes
   from the root `VERSION` file and the minor is the first-parent commit count
   since `VERSION` changed, so image tags are `MAJOR.MINOR`, `MAJOR`, `latest`,
-  `main` and `sha-...`.
+  `main` and `sha-...`. After a successful push it creates a GitHub Release
+  tagged `vMAJOR.MINOR` with generated notes (idempotent on re-runs).
 
 ---
 
