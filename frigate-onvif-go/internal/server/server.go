@@ -34,11 +34,11 @@ type Server struct {
 }
 
 // New returns a server for cfg, reporting daemon health and driving controller
-// through the ONVIF application.
-func New(cfg *config.Config, daemon Daemon, controller onvif.Controller) *Server {
+// through the ONVIF application. video may be nil.
+func New(cfg *config.Config, daemon Daemon, controller onvif.Controller, video onvif.VideoInfoProvider) *Server {
 	return &Server{
 		daemon: daemon,
-		app:    onvif.NewApp(cfg, controller),
+		app:    onvif.NewApp(cfg, controller, video),
 	}
 }
 

@@ -56,29 +56,31 @@ func (a *App) ptzConfigXML(element string) string {
 }
 
 func (a *App) videoSourceConfigXML(element string) string {
+	settings := a.videoSettings()
 	var b strings.Builder
 	fmt.Fprintf(&b, `<%s token="%s">`, element, videoSourceConfigToken)
 	b.WriteString("<tt:Name>VideoSourceConfiguration</tt:Name>")
 	b.WriteString("<tt:UseCount>1</tt:UseCount>")
 	b.WriteString("<tt:SourceToken>" + videoSourceToken + "</tt:SourceToken>")
 	fmt.Fprintf(&b, `<tt:Bounds x="0" y="0" width="%d" height="%d"/>`,
-		a.cfg.VideoWidth, a.cfg.VideoHeight)
+		settings.Width, settings.Height)
 	fmt.Fprintf(&b, "</%s>", element)
 	return b.String()
 }
 
 func (a *App) videoEncoderConfigXML(element string) string {
+	settings := a.videoSettings()
 	var b strings.Builder
 	fmt.Fprintf(&b, `<%s token="%s">`, element, videoEncoderConfigToken)
 	b.WriteString("<tt:Name>MainStream</tt:Name>")
 	b.WriteString("<tt:UseCount>1</tt:UseCount>")
-	b.WriteString("<tt:Encoding>H264</tt:Encoding>")
-	b.WriteString("<tt:Resolution><tt:Width>" + strconv.Itoa(a.cfg.VideoWidth) +
-		"</tt:Width><tt:Height>" + strconv.Itoa(a.cfg.VideoHeight) + "</tt:Height></tt:Resolution>")
+	b.WriteString("<tt:Encoding>" + escape(settings.Encoding) + "</tt:Encoding>")
+	b.WriteString("<tt:Resolution><tt:Width>" + strconv.Itoa(settings.Width) +
+		"</tt:Width><tt:Height>" + strconv.Itoa(settings.Height) + "</tt:Height></tt:Resolution>")
 	b.WriteString("<tt:Quality>5</tt:Quality>")
-	b.WriteString("<tt:RateControl><tt:FrameRateLimit>" + strconv.Itoa(a.cfg.VideoFps) +
+	b.WriteString("<tt:RateControl><tt:FrameRateLimit>" + strconv.Itoa(settings.Fps) +
 		"</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval>" +
-		"<tt:BitrateLimit>4096</tt:BitrateLimit></tt:RateControl>")
+		"<tt:BitrateLimit>" + strconv.Itoa(settings.Bitrate) + "</tt:BitrateLimit></tt:RateControl>")
 	b.WriteString("<tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type>" +
 		"<tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address>" +
 		"<tt:Port>0</tt:Port><tt:TTL>1</tt:TTL>" +

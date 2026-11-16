@@ -5,6 +5,7 @@
 //
 //	PING                        -> PONG
 //	POS                         -> POS <pan> <tilt> <zoom> | ERR <code>
+//	INFO                        -> INFO enc=... width=... height=... fps=... bitrate=... | ERR <code>
 //	LEFT START [speed]          -> OK | ERR <code>
 //	LEFT STOP                   -> OK | ERR <code>
 //
@@ -101,6 +102,73 @@ func (c *Client) Command(direction, action string, speed int) error {
 
 	_, err := c.call(message)
 	return err
+}
+
+// VideoInfo is the encoder metadata the daemon reads from the camera. Zero
+// fields mean "the camera did not report it"; callers fall back to the
+// configured VIDEO_* values.
+type VideoInfo struct {
+	Encoding string
+	Width    int
+	Height   int
+	Fps      int
+	Bitrate  int
+}
+
+// Info asks the daemon for the current encoder configuration. The reply is a
+// single line such as:
+//
+//	INFO enc=H265 width=3840 height=2160 fps=30 bitrate=4096
+func (c *Client) Info() (VideoInfo, error) {
+	reply, err := c.call("INFO")
+	if err != nil {
+		return VideoInfo{}, err
+	}
+	return parseInfo(reply)
+}
+
+func parseInfo(reply string) (VideoInfo, error) {
+	fields := strings.Fields(reply)
+	if len(fields) == 0 || fields[0] != "INFO" {
+		return VideoInfo{}, fmt.Errorf("unexpected INFO reply %q", reply)
+	}
+
+	var info VideoInfo
+	for _, field := range fields[1:] {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
+		}
+		number, err := strconv.Atoi(value)
+		switch key {
+		case "enc":
+			encoding := strings.ToUpper(value)
+			if encoding == "MJPEG" {
+				encoding = "JPEG"
+			}
+			switch encoding {
+			case "H264", "H265", "JPEG", "MPEG4":
+				info.Encoding = encoding
+			}
+		case "width":
+			if err == nil {
+				info.Width = number
+			}
+		case "height":
+			if err == nil {
+				info.Height = number
+			}
+		case "fps":
+			if err == nil {
+				info.Fps = number
+			}
+		case "bitrate":
+			if err == nil {
+				info.Bitrate = number
+			}
+		}
+	}
+	return info, nil
 }
 
 // call writes one newline-terminated message and reads one reply line.

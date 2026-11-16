@@ -51,7 +51,7 @@ func newTestServer(t *testing.T) (*Server, *fakeDaemon, *fakeController) {
 	}
 	daemon := &fakeDaemon{running: true}
 	controller := &fakeController{}
-	return New(cfg, daemon, controller), daemon, controller
+	return New(cfg, daemon, controller, nil), daemon, controller
 }
 
 func do(s *Server, method, target, body string, contentLength int64) *httptest.ResponseRecorder {

@@ -119,6 +119,28 @@ async def main() -> int:
             video_sources[0].token == "vs_1",
             "video source token is vs_1",
         )
+        check(
+            profile.VideoEncoderConfiguration.Encoding in ("H264", "H265", "JPEG", "MPEG4"),
+            "profile reports a supported video encoding from the SDK",
+        )
+        check(
+            (profile.VideoEncoderConfiguration.Resolution.Width or 0) > 0,
+            "profile reports a resolution",
+        )
+
+        # Frigate's Add Camera wizard uses GetStreamUri, then ffprobe.
+        stream_request = media.create_type("GetStreamUri")
+        stream_request.ProfileToken = PROFILE_TOKEN
+        stream_request.StreamSetup = {
+            "Stream": "RTP-Unicast",
+            "Transport": {"Protocol": "RTSP"},
+        }
+        stream = await media.GetStreamUri(stream_request)
+        check(
+            stream.Uri.startswith("rtsp://")
+            and stream.Uri.rstrip("/").endswith(("/H.264", "/H.265")),
+            f"GetStreamUri returns an RTSP stream URL ({stream.Uri})",
+        )
 
         ptz = await cam.create_ptz_service()
 

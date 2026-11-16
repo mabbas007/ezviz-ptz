@@ -33,12 +33,14 @@ type handlerFunc func(op *node, baseURL string) (string, *Fault)
 type App struct {
 	cfg      *config.Config
 	ptz      Controller
+	video    VideoInfoProvider
 	dispatch map[string]map[string]handlerFunc
 }
 
-// NewApp returns an ONVIF application for cfg, driving ptz.
-func NewApp(cfg *config.Config, ptz Controller) *App {
-	app := &App{cfg: cfg, ptz: ptz}
+// NewApp returns an ONVIF application for cfg, driving ptz and reading camera
+// metadata from video (which may be nil).
+func NewApp(cfg *config.Config, ptz Controller, video VideoInfoProvider) *App {
+	app := &App{cfg: cfg, ptz: ptz, video: video}
 	app.dispatch = map[string]map[string]handlerFunc{
 		"device": {
 			"GetServices":            app.deviceGetServices,

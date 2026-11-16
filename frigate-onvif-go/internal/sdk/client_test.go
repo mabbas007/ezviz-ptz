@@ -178,6 +178,54 @@ func TestClientCameraProbe(t *testing.T) {
 	})
 }
 
+func TestClientInfo(t *testing.T) {
+	path := shortSocketPath(t)
+	serveSocket(t, path, func(message string) string {
+		if message == "INFO" {
+			return "INFO enc=H265 width=3840 height=2160 fps=30 bitrate=8192"
+		}
+		return "ERR 7"
+	})
+
+	client := NewClient(path, time.Second)
+	info, err := client.Info()
+	if err != nil {
+		t.Fatalf("Info(): %v", err)
+	}
+	want := VideoInfo{Encoding: "H265", Width: 3840, Height: 2160, Fps: 30, Bitrate: 8192}
+	if info != want {
+		t.Fatalf("Info() = %+v, want %+v", info, want)
+	}
+}
+
+func TestClientInfoFallbacks(t *testing.T) {
+	path := shortSocketPath(t)
+	serveSocket(t, path, func(string) string {
+		return "INFO enc=UNKNOWN width=bad height=0 fps=0 bitrate=4096"
+	})
+
+	info, err := NewClient(path, time.Second).Info()
+	if err != nil {
+		t.Fatalf("Info(): %v", err)
+	}
+	if info.Encoding != "" || info.Width != 0 || info.Height != 0 || info.Fps != 0 {
+		t.Fatalf("Info() = %+v, want unknown fields to stay zero", info)
+	}
+	if info.Bitrate != 4096 {
+		t.Fatalf("Bitrate = %d, want 4096", info.Bitrate)
+	}
+}
+
+func TestClientInfoMalformedReply(t *testing.T) {
+	path := shortSocketPath(t)
+	serveSocket(t, path, func(string) string { return "OK" })
+
+	if _, err := NewClient(path, time.Second).Info(); err == nil ||
+		!strings.Contains(err.Error(), "unexpected INFO reply") {
+		t.Fatalf("Info() error = %v, want an unexpected-reply error", err)
+	}
+}
+
 func TestClientTimesOut(t *testing.T) {
 	path := shortSocketPath(t)
 	serveSocket(t, path, func(string) string {

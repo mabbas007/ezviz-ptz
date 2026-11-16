@@ -438,7 +438,7 @@ WS-Discovery:
 | Service | Implemented operations |
 | --- | --- |
 | **Device** | `GetServices`, `GetCapabilities`, `GetDeviceInformation`, `GetSystemDateAndTime`, `GetServiceCapabilities` |
-| **Media** | `GetServiceCapabilities`, `GetProfiles`, `GetProfile`, `GetVideoSources`, `GetVideoSourceConfigurations`, `GetVideoEncoderConfigurations`, `GetVideoSourceConfiguration`, `GetVideoEncoderConfiguration`, `GetStreamUri` (only when `RTSP_URL` is set) |
+| **Media** | `GetServiceCapabilities`, `GetProfiles`, `GetProfile`, `GetVideoSources`, `GetVideoSourceConfigurations`, `GetVideoEncoderConfigurations`, `GetVideoSourceConfiguration`, `GetVideoEncoderConfiguration`, `GetStreamUri` (auto-built or `RTSP_URL`) |
 | **PTZ** | `GetServiceCapabilities`, `GetNodes`, `GetNode`, `GetConfigurations`, `GetConfiguration`, `GetConfigurationOptions`, `GetStatus`, `GetPresets` (always empty), `ContinuousMove`, `RelativeMove`, `Stop` |
 | **PTZ (fault)** | `AbsoluteMove` returns `ter:ActionNotSupported` |
 
@@ -493,7 +493,8 @@ Everything is environment-driven; `.env.example` documents the full set.
 | Camera | `CAMERA_HOST` (required), `CAMERA_PORT`, `CAMERA_USER`, `CAMERA_PASSWORD` (required) |
 | ONVIF server | `ONVIF_BIND`, `ONVIF_PORT`, `ONVIF_USER`, `ONVIF_PASSWORD`, `ONVIF_ADVERTISE_HOST` |
 | Movement | `PTZ_SPEED`, `PAN_SECONDS_PER_FOV`, `TILT_SECONDS_PER_FOV`, `MIN_MOVE_SECONDS`, `MAX_MOVE_SECONDS`, `PTZ_ZOOM` |
-| Media profile | `PROFILE_TOKEN`, `VIDEO_WIDTH`, `VIDEO_HEIGHT`, `VIDEO_FPS`, `RTSP_URL` |
+| Media profile | `PROFILE_TOKEN`, `VIDEO_ENCODING`, `VIDEO_BITRATE`, `VIDEO_WIDTH`, `VIDEO_HEIGHT`, `VIDEO_FPS` |
+| RTSP URL | `RTSP_URL` (override), `RTSP_PORT`, `RTSP_PATH`, `RTSP_ADVERTISE_HOST`, `RTSP_USER`, `RTSP_PASSWORD`, `RTSP_INCLUDE_CREDENTIALS` |
 | Daemon / housekeeping | `PTZ_SOCK`, `PTZ_BINARY`, `STARTUP_TIMEOUT`, `HEALTH_INTERVAL`, `LOG_LEVEL` |
 
 Authentication is enabled when **either** `ONVIF_USER` or `ONVIF_PASSWORD` is
@@ -674,7 +675,7 @@ flowchart LR
 | Report no presets instead of storing them | The camera rejects every SDK preset operation (`NET_DVR_NETWORK_ERRORDATA`, all 300 slots) and exposes no ISAPI endpoint, so no implementation can work | Frigate's `return_preset` is unusable; the camera does not return home after tracking |
 | Go standard library HTTP server | Single static binary, no third-party Go dependencies, small image | No HTTP/2, TLS or WSDL serving; one SOAP op per POST |
 | No WS-Discovery | Frigate uses explicit host/port; discovery adds UDP/broadcast complexity | Discovery-based tools cannot auto-find the bridge |
-| Static media profile metadata | Frigate only needs a plausible profile and the PTZ config | `GetStreamUri` is a placeholder unless `RTSP_URL` is set |
+| SDK-derived media profile metadata, URL composed from config | Frigate gets the real codec/resolution/FPS/bitrate from the SDK when available and ffprobes the returned URL; no HTTP/ONVIF endpoint is needed on the camera | Firmware that rejects the config read falls back to `VIDEO_*` |
 | Health = supervisor state | Makes broken camera links visible in `docker ps` | Brief `200` while the daemon is still logging in |
 
 ---
@@ -686,8 +687,8 @@ flowchart LR
 - Single camera per process; no profile-token routing across cameras.
 - No absolute PTZ, no zoom position spaces, no relative zoom.
 - `GetStatus` position is fixed at `0,0`; no closed-loop correction.
-- No WS-Discovery, events, imaging, recordings, snapshots or streaming (except
-  the optional `RTSP_URL`).
+- No WS-Discovery, events, imaging, recordings, snapshots or proxied streaming
+  (`GetStreamUri` points clients at the camera's RTSP server).
 - Plain HTTP/WS-Security only; no TLS.
 - Relative move accuracy depends on manual calibration of
   `PAN_SECONDS_PER_FOV` / `TILT_SECONDS_PER_FOV`.

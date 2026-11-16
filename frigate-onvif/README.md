@@ -26,7 +26,15 @@ vendor SDK libraries are x86-64.
 
 ## What Frigate gets
 
-- Media profile with a video source, H.264 encoder and a PTZ configuration.
+- Media profile with a video source, encoder and a PTZ configuration. The
+  encoder details (codec, resolution, FPS, bitrate) come from the Hikvision
+  SDK when the camera answers `NET_DVR_GET_COMPRESSCFG_V30`, otherwise from
+  `VIDEO_ENCODING` / `VIDEO_WIDTH` / `VIDEO_HEIGHT` / `VIDEO_FPS` /
+  `VIDEO_BITRATE`.
+- `GetStreamUri`: the RTSP URL is composed from `CAMERA_HOST`, `RTSP_PORT`,
+  `RTSP_PATH` and the camera credentials (or `RTSP_URL` as a full override).
+  Frigate's Add Camera wizard calls this and then ffprobes the result, so the
+  camera does not need to expose an HTTP/ONVIF endpoint.
 - PTZ service advertising **continuous pan/tilt**, **FOV relative pan/tilt**
   (`TranslationSpaceFov`, range -1..1) and `MoveStatus`.
 - No absolute position spaces, and no relative/absolute zoom spaces. Frigate
@@ -183,8 +191,15 @@ the variables above.
 | `PTZ_SOCK` | `/tmp/ptz_control.sock` | UNIX socket for the SDK daemon (inside the container). |
 | `PTZ_BINARY` | `/app/ptz_control` | Path to the SDK daemon binary. |
 | `PROFILE_TOKEN` | `profile_1` | Media profile token reported to clients. |
-| `VIDEO_WIDTH` / `VIDEO_HEIGHT` / `VIDEO_FPS` | `1920` / `1080` / `25` | Cosmetic media-profile metadata only (bounds, resolution, framerate). It never changes the video; Frigate uses its own ffmpeg input. |
-| `RTSP_URL` | *(empty)* | If set, `GetStreamUri` returns it; otherwise that operation faults. Frigate does not call it for PTZ. |
+| `VIDEO_ENCODING` | `H264` | Fallback encoding for the media profile when the SDK cannot report it (`H264`, `H265`, `JPEG`, `MPEG4`). |
+| `VIDEO_BITRATE` | `4096` | Fallback bitrate in kbps for the media profile. |
+| `VIDEO_WIDTH` / `VIDEO_HEIGHT` / `VIDEO_FPS` | `1920` / `1080` / `25` | Fallback media-profile metadata (bounds, resolution, framerate). SDK values override these when available. |
+| `RTSP_URL` | *(empty)* | Full override for `GetStreamUri`. Usually leave empty: the URL is composed from the variables below. |
+| `RTSP_PORT` | `554` | RTSP port used in the advertised URL. |
+| `RTSP_PATH` | *(from encoding)* | Stream path: `/H.264` for H.264, `/H.265` for H.265 when empty. Use `/Streaming/Channels/101` for other firmware, optionally with `?transportmode=unicast`. |
+| `RTSP_ADVERTISE_HOST` | `CAMERA_HOST` | Host used in the advertised URL, for when Frigate reaches the camera through another address. May include a port. |
+| `RTSP_USER` / `RTSP_PASSWORD` | camera credentials | Credentials embedded in the advertised URL. |
+| `RTSP_INCLUDE_CREDENTIALS` | `true` | Embed `RTSP_USER`/`RTSP_PASSWORD` in `GetStreamUri`. When `false`, the URL is clean and Frigate injects its ONVIF credentials instead. |
 
 ### Calibrating `PAN_SECONDS_PER_FOV` / `TILT_SECONDS_PER_FOV`
 
@@ -226,9 +241,14 @@ once and then accepts newline-terminated commands on the UNIX socket:
 ```
 PING                        -> PONG
 POS                         -> POS <pan> <tilt> <zoom> | ERR <code>
+INFO                        -> INFO enc=H265 width=3840 height=2160 fps=30 bitrate=4096 | ERR <code>
 LEFT START [speed]          -> OK | ERR <code>
 LEFT STOP                   -> OK | ERR <code>
 ```
+
+`INFO` reads `NET_DVR_GET_COMPRESSCFG_V30` (network stream). The bridge caches
+the result and keeps using the last known values across restarts; if the camera
+rejects the read, the `VIDEO_*` defaults are used.
 
 If the daemon dies, or three consecutive camera probes (`POS` through the SDK)
 fail, it is restarted with exponential backoff; a restart forces a fresh camera

@@ -56,6 +56,8 @@ func TestDaemonHelperProcess(t *testing.T) {
 			switch {
 			case message == "PING":
 				fmt.Fprintln(conn, "PONG")
+			case message == "INFO":
+				fmt.Fprintln(conn, "INFO enc=H265 width=3840 height=2160 fps=30 bitrate=4096")
 			case strings.HasPrefix(message, "POS"):
 				if posErr {
 					fmt.Fprintln(conn, "ERR 7")
@@ -148,6 +150,24 @@ func TestDaemonStartsCleansSocketAndStops(t *testing.T) {
 	if status.Running || status.PID != nil {
 		t.Fatalf("Status() after Stop = %+v, want not running", status)
 	}
+}
+
+func TestDaemonCachesVideoInfo(t *testing.T) {
+	socket := shortSocketPath(t)
+	cfg := testDaemonConfig(socket)
+	client := NewClient(socket, 2*time.Second)
+	daemon := NewDaemon(cfg, client)
+
+	var spawns int32
+	daemon.newCommand = helperCommand(socket, "", &spawns)
+	daemon.Start()
+	t.Cleanup(daemon.Stop)
+
+	waitFor(t, 5*time.Second, "the camera video info", func() bool {
+		info, ok := daemon.VideoInfo()
+		return ok && info.Encoding == "H265" && info.Width == 3840 &&
+			info.Height == 2160 && info.Fps == 30 && info.Bitrate == 4096
+	})
 }
 
 func TestDaemonRestartsAfterCrash(t *testing.T) {

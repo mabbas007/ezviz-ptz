@@ -44,6 +44,10 @@ type Daemon struct {
 	failures int
 	backoff  time.Duration
 
+	infoMu  sync.RWMutex
+	info    VideoInfo
+	hasInfo bool
+
 	// newCommand is replaced in tests to spawn a fake daemon.
 	newCommand func() *exec.Cmd
 }
@@ -111,6 +115,40 @@ func (d *Daemon) Status() Status {
 	return status
 }
 
+// VideoInfo returns the encoder metadata last reported by the camera. The
+// boolean is false until a successful INFO query, and the data is kept across
+// daemon restarts so a temporarily unreachable camera does not erase the
+// profile details.
+func (d *Daemon) VideoInfo() (VideoInfo, bool) {
+	d.infoMu.RLock()
+	defer d.infoMu.RUnlock()
+	return d.info, d.hasInfo
+}
+
+// refreshInfo updates the cached encoder metadata. A camera that rejects the
+// config read (EZVIZ firmware does this for several config classes) leaves the
+// previous values in place; the ONVIF layer then falls back to VIDEO_*.
+func (d *Daemon) refreshInfo() {
+	info, err := d.client.Info()
+	if err != nil {
+		slog.Debug("Could not read video info from the camera", "err", err)
+		return
+	}
+
+	d.infoMu.Lock()
+	d.info = info
+	d.hasInfo = true
+	d.infoMu.Unlock()
+
+	slog.Info("Camera video info",
+		"encoding", info.Encoding,
+		"width", info.Width,
+		"height", info.Height,
+		"fps", info.Fps,
+		"bitrate_kbps", info.Bitrate,
+	)
+}
+
 func (d *Daemon) supervise() {
 	defer close(d.stopped)
 
@@ -175,6 +213,9 @@ func (d *Daemon) healthy() bool {
 		return d.failures < 3
 	}
 	d.failures = 0
+	if _, ok := d.VideoInfo(); !ok {
+		d.refreshInfo()
+	}
 	return true
 }
 
@@ -249,6 +290,7 @@ func (d *Daemon) spawn() bool {
 		}
 		if d.client.Ping() {
 			slog.Info("PTZ daemon ready", "socket", d.cfg.PtzSocket)
+			d.refreshInfo()
 			return true
 		}
 		time.Sleep(250 * time.Millisecond)

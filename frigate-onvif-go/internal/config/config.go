@@ -38,11 +38,25 @@ type Config struct {
 	ZoomEnabled       bool
 
 	// --- media profile -----------------------------------------------------
-	ProfileToken string
-	VideoWidth   int
-	VideoHeight  int
-	VideoFps     int
-	RtspUrl      string
+	ProfileToken  string
+	VideoWidth    int
+	VideoHeight   int
+	VideoFps      int
+	VideoEncoding string
+	VideoBitrate  int
+
+	// --- RTSP stream advertised through GetStreamUri -----------------------
+	// RtspUrl is a full override; when empty the URL is composed from the
+	// fields below. The camera itself only speaks RTSP on 554 with fixed
+	// vendor paths (H.264 / H.265 for EZVIZ), so this is configuration, not
+	// something the SDK can reliably report.
+	RtspUrl                string
+	RtspPort               int
+	RtspPath               string
+	RtspAdvertiseHost      string
+	RtspUser               string
+	RtspPassword           string
+	RtspIncludeCredentials bool
 
 	// --- housekeeping ------------------------------------------------------
 	LogLevel       string
@@ -74,6 +88,14 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	videoFps, err := getEnvInt("VIDEO_FPS", 25)
+	if err != nil {
+		return nil, err
+	}
+	videoBitrate, err := getEnvInt("VIDEO_BITRATE", 4096)
+	if err != nil {
+		return nil, err
+	}
+	rtspPort, err := getEnvInt("RTSP_PORT", 554)
 	if err != nil {
 		return nil, err
 	}
@@ -123,15 +145,36 @@ func Load() (*Config, error) {
 		MaxMoveSeconds:    maxMove,
 		ZoomEnabled:       getEnvBool("PTZ_ZOOM", true),
 
-		ProfileToken: getEnv("PROFILE_TOKEN", "profile_1"),
-		VideoWidth:   videoWidth,
-		VideoHeight:  videoHeight,
-		VideoFps:     videoFps,
-		RtspUrl:      getEnv("RTSP_URL", ""),
+		ProfileToken:  getEnv("PROFILE_TOKEN", "profile_1"),
+		VideoWidth:    videoWidth,
+		VideoHeight:   videoHeight,
+		VideoFps:      videoFps,
+		VideoEncoding: normalizeEncoding(getEnv("VIDEO_ENCODING", "H264")),
+		VideoBitrate:  videoBitrate,
+
+		RtspUrl:                getEnv("RTSP_URL", ""),
+		RtspPort:               rtspPort,
+		RtspPath:               getEnv("RTSP_PATH", ""),
+		RtspAdvertiseHost:      getEnv("RTSP_ADVERTISE_HOST", ""),
+		RtspUser:               getEnv("RTSP_USER", ""),
+		RtspPassword:           getEnv("RTSP_PASSWORD", ""),
+		RtspIncludeCredentials: getEnvBool("RTSP_INCLUDE_CREDENTIALS", true),
 
 		LogLevel:       strings.ToUpper(getEnv("LOG_LEVEL", "INFO")),
 		StartupTimeout: startupTimeout,
 		HealthInterval: healthInterval,
+	}
+
+	// The stream normally uses the same account as the SDK. RTSP_USER and
+	// RTSP_PASSWORD override it when the camera has a separate RTSP user.
+	if cfg.RtspUser == "" {
+		cfg.RtspUser = cfg.CameraUser
+	}
+	if cfg.RtspPassword == "" {
+		cfg.RtspPassword = cfg.CameraPassword
+	}
+	if cfg.RtspAdvertiseHost == "" {
+		cfg.RtspAdvertiseHost = cfg.CameraHost
 	}
 
 	if cfg.CameraHost == "" {
@@ -139,6 +182,18 @@ func Load() (*Config, error) {
 	}
 	if cfg.CameraPassword == "" {
 		return nil, fmt.Errorf("CAMERA_PASSWORD is required (the camera's verification code)")
+	}
+	if cfg.RtspPort < 1 || cfg.RtspPort > 65535 {
+		return nil, fmt.Errorf("RTSP_PORT must be between 1 and 65535, got %d", cfg.RtspPort)
+	}
+	if cfg.VideoBitrate <= 0 {
+		return nil, fmt.Errorf("VIDEO_BITRATE must be positive, got %d", cfg.VideoBitrate)
+	}
+	switch cfg.VideoEncoding {
+	case "H264", "H265", "JPEG", "MPEG4":
+	default:
+		return nil, fmt.Errorf("VIDEO_ENCODING must be H264, H265, JPEG or MPEG4, got %q",
+			cfg.VideoEncoding)
 	}
 
 	// The camera accepts speeds 1..7.
@@ -157,6 +212,15 @@ func getEnv(key, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	return fallback
+}
+
+// normalizeEncoding maps the SDK's MJPEG spelling to the ONVIF enumeration.
+func normalizeEncoding(value string) string {
+	encoding := strings.ToUpper(strings.TrimSpace(value))
+	if encoding == "MJPEG" {
+		return "JPEG"
+	}
+	return encoding
 }
 
 func getEnvInt(key string, fallback int) (int, error) {

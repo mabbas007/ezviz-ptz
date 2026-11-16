@@ -38,7 +38,7 @@ func main() {
 	client := sdk.NewClient(cfg.PtzSocket, 5*time.Second)
 	controller := ptz.NewController(client, cfg)
 	daemon := sdk.NewDaemon(cfg, client)
-	srv := server.New(cfg, daemon, controller)
+	srv := server.New(cfg, daemon, controller, daemon)
 
 	// The HTTP server starts immediately and reports "degraded" until the SDK
 	// daemon has logged into the camera. Supervision (startup, health checks,

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"frigate-onvif-go/internal/config"
+	"frigate-onvif-go/internal/sdk"
 )
 
 const (
@@ -66,23 +67,32 @@ func (f *fakeController) Moving() bool        { return f.panTiltMoving || f.zoom
 
 func testConfig() *config.Config {
 	return &config.Config{
-		CameraHost:       "192.168.1.10",
-		OnvifPort:        8000,
-		ProfileToken:     "profile_1",
-		VideoWidth:       1920,
-		VideoHeight:      1080,
-		VideoFps:         25,
-		ZoomEnabled:      true,
-		PanSecondsPerFov: 0.9,
-		MinMoveSeconds:   0.10,
-		MaxMoveSeconds:   4.0,
+		CameraHost:             "192.168.1.10",
+		CameraUser:             "admin",
+		CameraPassword:         "secret",
+		OnvifPort:              8000,
+		ProfileToken:           "profile_1",
+		VideoWidth:             1920,
+		VideoHeight:            1080,
+		VideoFps:               25,
+		VideoEncoding:          "H264",
+		VideoBitrate:           4096,
+		RtspPort:               554,
+		RtspAdvertiseHost:      "192.168.1.10",
+		RtspUser:               "admin",
+		RtspPassword:           "secret",
+		RtspIncludeCredentials: true,
+		ZoomEnabled:            true,
+		PanSecondsPerFov:       0.9,
+		MinMoveSeconds:         0.10,
+		MaxMoveSeconds:         4.0,
 	}
 }
 
 func newTestApp(t *testing.T, controller Controller) (*App, *config.Config) {
 	t.Helper()
 	cfg := testConfig()
-	return NewApp(cfg, controller), cfg
+	return NewApp(cfg, controller, nil), cfg
 }
 
 func envelopeXML(header, body string) string {
@@ -349,9 +359,10 @@ func TestProfilesAndMedia(t *testing.T) {
 	assertContains(t, body, `<trt:Configuration token="vec_1">`)
 
 	status, body = call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
-	if status != 500 || !strings.Contains(body, "RTSP_URL is not configured") {
-		t.Fatalf("GetStreamUri without RTSP_URL = (%d, %s), want a fault", status, body)
+	if status != 200 {
+		t.Fatalf("GetStreamUri = (%d, %s), want 200", status, body)
 	}
+	assertContains(t, body, "<tt:Uri>rtsp://admin:secret@192.168.1.10:554/H.264</tt:Uri>")
 
 	app.cfg.RtspUrl = "rtsp://cam/live?x=1&y=2"
 	status, body = call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
@@ -359,6 +370,111 @@ func TestProfilesAndMedia(t *testing.T) {
 		t.Fatalf("status = %d, want 200", status)
 	}
 	assertContains(t, body, "rtsp://cam/live?x=1&amp;y=2")
+}
+
+func TestGetStreamURIResolution(t *testing.T) {
+	app, cfg := newTestApp(t, &fakeController{})
+
+	// Custom path, non-default port and a URL-quoted password.
+	cfg.RtspPath = "/Streaming/Channels/101?transportmode=unicast"
+	cfg.RtspPort = 8554
+	cfg.RtspAdvertiseHost = "camera.example"
+	cfg.RtspUser = "rtsp user"
+	cfg.RtspPassword = "p@ss/word"
+
+	status, body := call(t, app, "/onvif/media_service", "",
+		`<trt:GetStreamUri><trt:ProfileToken>profile_1</trt:ProfileToken>`+
+			`<trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream>`+
+			`<tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup>`+
+			`</trt:GetStreamUri>`)
+	if status != 200 {
+		t.Fatalf("GetStreamUri = (%d, %s), want 200", status, body)
+	}
+	assertContains(t, body,
+		"<tt:Uri>rtsp://rtsp%20user:p%40ss%2Fword@camera.example:8554/Streaming/Channels/101?transportmode=unicast</tt:Uri>")
+	assertWellFormed(t, body)
+
+	// Without credentials the URI is clean and Frigate injects its ONVIF user.
+	cfg.RtspIncludeCredentials = false
+	_, body = call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
+	assertContains(t, body, "<tt:Uri>rtsp://camera.example:8554/Streaming/Channels/101?transportmode=unicast</tt:Uri>")
+	assertNotContains(t, body, "rtsp%20user")
+
+	// RTSP_ADVERTISE_HOST may already contain a port.
+	cfg.RtspAdvertiseHost = "camera.example:10554"
+	_, body = call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
+	assertContains(t, body, "rtsp://camera.example:10554/Streaming/Channels/101")
+
+	// IPv6 literals are bracketed in the URL.
+	cfg.RtspAdvertiseHost = "[2001:db8::1]"
+	_, body = call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
+	assertContains(t, body, "rtsp://[2001:db8::1]:8554/Streaming/Channels/101")
+}
+
+func TestGetStreamURIPathFromEncoding(t *testing.T) {
+	app, cfg := newTestApp(t, &fakeController{})
+	cfg.RtspIncludeCredentials = false
+
+	_, body := call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
+	assertContains(t, body, "<tt:Uri>rtsp://192.168.1.10:554/H.264</tt:Uri>")
+
+	cfg.VideoEncoding = "H265"
+	_, body = call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
+	assertContains(t, body, "<tt:Uri>rtsp://192.168.1.10:554/H.265</tt:Uri>")
+
+	// JPEG has no stable vendor path, so RTSP_PATH is required.
+	cfg.VideoEncoding = "JPEG"
+	status, body := call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
+	if status != 500 || !strings.Contains(body, "RTSP_PATH") {
+		t.Fatalf("GetStreamUri with JPEG and no RTSP_PATH = (%d, %s), want a fault", status, body)
+	}
+}
+
+func TestGetStreamURIValidation(t *testing.T) {
+	app, _ := newTestApp(t, &fakeController{})
+
+	status, body := call(t, app, "/onvif/media_service", "",
+		`<trt:GetStreamUri><trt:ProfileToken>nope</trt:ProfileToken></trt:GetStreamUri>`)
+	if status != 500 || !strings.Contains(body, "ter:NoProfile") {
+		t.Fatalf("unknown profile token = (%d, %s), want a NoProfile fault", status, body)
+	}
+
+	status, body = call(t, app, "/onvif/media_service", "",
+		`<trt:GetStreamUri><trt:StreamSetup><tt:Transport>`+
+			`<tt:Protocol>HTTP</tt:Protocol></tt:Transport></trt:StreamSetup></trt:GetStreamUri>`)
+	if status != 500 || !strings.Contains(body, "not supported") {
+		t.Fatalf("HTTP protocol = (%d, %s), want a fault", status, body)
+	}
+}
+
+func TestVideoInfoOverridesProfile(t *testing.T) {
+	app, cfg := newTestApp(t, &fakeController{})
+	app.video = fakeVideoInfoProvider{
+		info: sdk.VideoInfo{Encoding: "H265", Width: 3840, Height: 2160, Fps: 30, Bitrate: 8192},
+	}
+
+	_, body := call(t, app, "/onvif/media_service", "", `<trt:GetProfiles/>`)
+	assertContains(t, body, "<tt:Encoding>H265</tt:Encoding>")
+	assertContains(t, body, `<tt:Bounds x="0" y="0" width="3840" height="2160"/>`)
+	assertContains(t, body, "<tt:FrameRateLimit>30</tt:FrameRateLimit>")
+	assertContains(t, body, "<tt:BitrateLimit>8192</tt:BitrateLimit>")
+
+	_, body = call(t, app, "/onvif/media_service", "", `<trt:GetVideoSources/>`)
+	assertContains(t, body, "<tt:Framerate>30</tt:Framerate>")
+	assertContains(t, body, "<tt:Width>3840</tt:Width><tt:Height>2160</tt:Height>")
+
+	// The SDK encoding also selects the default vendor RTSP path.
+	cfg.RtspIncludeCredentials = false
+	_, body = call(t, app, "/onvif/media_service", "", `<trt:GetStreamUri/>`)
+	assertContains(t, body, "<tt:Uri>rtsp://192.168.1.10:554/H.265</tt:Uri>")
+}
+
+type fakeVideoInfoProvider struct {
+	info sdk.VideoInfo
+}
+
+func (f fakeVideoInfoProvider) VideoInfo() (sdk.VideoInfo, bool) {
+	return f.info, true
 }
 
 func TestSpacesAndNodes(t *testing.T) {
@@ -517,6 +633,7 @@ func TestResponsesAreWellFormed(t *testing.T) {
 		{"/onvif/media_service", `<trt:GetVideoEncoderConfigurations/>`},
 		{"/onvif/media_service", `<trt:GetVideoSourceConfiguration/>`},
 		{"/onvif/media_service", `<trt:GetVideoEncoderConfiguration/>`},
+		{"/onvif/media_service", `<trt:GetStreamUri/>`},
 		{"/onvif/media_service", `<trt:GetServiceCapabilities/>`},
 		{"/onvif/ptz_service", `<tptz:GetServiceCapabilities/>`},
 		{"/onvif/ptz_service", `<tptz:GetNodes/>`},

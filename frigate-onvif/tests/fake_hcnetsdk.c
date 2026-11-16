@@ -3,14 +3,53 @@
  *
  * The real SDK only runs against a camera, so for tests we LD_PRELOAD this
  * shared object over libhcnetsdk.so.  It accepts every command and reports a
- * fixed PTZ position so the whole ONVIF surface can be exercised offline.
+ * fixed PTZ position plus a fixed encoder configuration so the whole ONVIF
+ * surface can be exercised offline.
  *
  * Build with: gcc -shared -fPIC -o libfakesdk.so fake_hcnetsdk.c
  */
+#include <string.h>
+
 typedef unsigned short WORD;
 typedef unsigned int DWORD;
+typedef unsigned char BYTE;
 typedef int LONG;
 typedef int BOOL;
+
+#define NET_DVR_GET_COMPRESSCFG_V30 1040
+
+/* NET_DVR_COMPRESSION_INFO_V30, layout from HCNetSDK.h. */
+typedef struct {
+    BYTE byStreamType;
+    BYTE byResolution;
+    BYTE byBitrateType;
+    BYTE byPicQuality;
+    DWORD dwVideoBitrate;
+    DWORD dwVideoFrameRate;
+    WORD wIntervalFrameI;
+    BYTE byIntervalBPFrame;
+    BYTE byres1;
+    BYTE byVideoEncType;
+    BYTE byAudioEncType;
+    BYTE byVideoEncComplexity;
+    BYTE byEnableSvc;
+    BYTE byFormatType;
+    BYTE byAudioBitRate;
+    BYTE byStreamSmooth;
+    BYTE byAudioSamplingRate;
+    BYTE bySmartCodec;
+    BYTE byDepthMapEnable;
+    WORD wAverageVideoBitrate;
+} fake_compression_info_v30;
+
+/* NET_DVR_COMPRESSIONCFG_V30, layout from HCNetSDK.h. */
+typedef struct {
+    DWORD dwSize;
+    fake_compression_info_v30 struNormHighRecordPara;
+    fake_compression_info_v30 struRes;
+    fake_compression_info_v30 struEventRecordPara;
+    fake_compression_info_v30 struNetPara;
+} fake_compressioncfg_v30;
 
 int NET_DVR_Init(void) { return 1; }
 int NET_DVR_Cleanup(void) { return 1; }
@@ -56,17 +95,30 @@ int NET_DVR_GetDVRConfig(
     LONG uid, DWORD cmd, LONG chan, void *buf, DWORD size, DWORD *ret
 ) {
     (void)uid;
-    (void)cmd;
     (void)chan;
     (void)size;
+    if (ret) {
+        *ret = 0;
+    }
+
+    if (cmd == NET_DVR_GET_COMPRESSCFG_V30) {
+        /* Main/network stream: H.265, 1920x1080, 30 fps, 4096 kbps. */
+        fake_compressioncfg_v30 *cfg = (fake_compressioncfg_v30 *)buf;
+        memset(cfg, 0, sizeof(*cfg));
+        cfg->dwSize = sizeof(*cfg);
+        cfg->struNetPara.byResolution = 39;
+        cfg->struNetPara.byVideoEncType = 10;
+        cfg->struNetPara.dwVideoFrameRate = 18;
+        cfg->struNetPara.dwVideoBitrate = 0x80000000u | 4096u;
+        cfg->struNetPara.wAverageVideoBitrate = 4096;
+        return 1;
+    }
+
     /* NET_DVR_PTZPOS: wAction, wPanPos, wTiltPos, wZoomPos */
     unsigned short *p = (unsigned short *)buf;
     p[0] = 0;
     p[1] = 1234;
     p[2] = 5678;
     p[3] = 90;
-    if (ret) {
-        *ret = 0;
-    }
     return 1;
 }

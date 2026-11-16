@@ -36,6 +36,16 @@ x-ptz-service: &ptz-service
     ONVIF_PASSWORD: ${ONVIF_PASSWORD:-}
     ONVIF_ADVERTISE_HOST: ${ONVIF_ADVERTISE_HOST:-}
 
+    # --- media profile / RTSP URL (Frigate Add Camera) --------------------
+    RTSP_PORT: ${RTSP_PORT:-554}
+    RTSP_PATH: ${RTSP_PATH:-}
+    RTSP_ADVERTISE_HOST: ${RTSP_ADVERTISE_HOST:-}
+    RTSP_USER: ${RTSP_USER:-}
+    RTSP_PASSWORD: ${RTSP_PASSWORD:-}
+    RTSP_INCLUDE_CREDENTIALS: ${RTSP_INCLUDE_CREDENTIALS:-true}
+    VIDEO_ENCODING: ${VIDEO_ENCODING:-H264}
+    VIDEO_BITRATE: ${VIDEO_BITRATE:-4096}
+
     # --- movement tuning (see README) ------------------------------------
     PTZ_SPEED: ${PTZ_SPEED:-4}
     PAN_SECONDS_PER_FOV: ${PAN_SECONDS_PER_FOV:-0.9}
